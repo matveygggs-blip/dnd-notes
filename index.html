@@ -1,858 +1,1024 @@
 <!DOCTYPE html>
 <html lang="ru" class="dark">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Дневник Кампании</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Gun.js для мгновенной синхронизации между игроками без регистрации -->
-    <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
-
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'system-ui', 'sans-serif'],
-                        serif: ['Newsreader', 'Georgia', 'serif']
-                    }
-                }
-            }
-        }
-    </script>
-
-    <style>
-        body {
-            font-family: 'Inter', system-ui, sans-serif;
-            -webkit-font-smoothing: antialiased;
-        }
-        ::-webkit-scrollbar {
-            width: 5px;
-            height: 5px;
-        }
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: rgba(156, 163, 175, 0.25);
-            border-radius: 3px;
-        }
-        textarea {
-            resize: vertical;
-        }
-        @keyframes pulse-dot {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
-        .animate-pulse-slow {
-            animation: pulse-dot 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>D&D VTT & Дневник Кампании</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- MQTT.js для мгновенной синхронизации координат и состояния без настроек -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <!-- Gun.js для распределенного хранения состояния -->
+  <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+    body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; font-family: 'Inter', sans-serif; background: #0f1117; color: #e2e8f0; }
+    input, textarea { user-select: text; -webkit-user-select: text; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+    .glass { background: rgba(17, 20, 28, 0.88); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); }
+    .tool-btn { transition: all 0.15s ease; }
+    .tool-btn.active { background: #4f46e5; color: #fff; box-shadow: 0 0 12px rgba(79, 70, 229, 0.5); }
+  </style>
 </head>
-<body class="bg-[#fbfaf8] text-stone-800 dark:bg-[#141413] dark:text-neutral-200 min-h-screen transition-colors duration-200 selection:bg-stone-200 dark:selection:bg-neutral-800">
+<body class="relative w-screen h-screen overflow-hidden">
 
-    <!-- Основной контейнер -->
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
+  <!-- ================= ИГРОВОЕ ПОЛЕ (CANVAS КАК В OWLBEAR RODEO) ================= -->
+  <canvas id="vtt-canvas" class="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing"></canvas>
 
-        <!-- Верхняя шапка в духе Notion / Obsidian -->
-        <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-stone-200/80 dark:border-neutral-800/80">
-            
-            <!-- Левая часть: Название и Статус -->
-            <div class="space-y-1">
-                <div class="flex items-center gap-2.5 flex-wrap">
-                    <h1 class="text-lg sm:text-xl font-semibold tracking-tight text-stone-900 dark:text-neutral-100">
-                        Дневник кампании
-                    </h1>
-                    <span class="text-stone-300 dark:text-neutral-700">/</span>
-                    <!-- Код комнаты -->
-                    <div class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-stone-200/60 dark:bg-neutral-800/70 text-xs font-mono text-stone-600 dark:text-neutral-300">
-                        <span class="opacity-60">#</span>
-                        <input id="roomInput" type="text" onchange="changeRoom(this.value)" class="bg-transparent focus:outline-none w-28 sm:w-32 font-medium" title="Код комнаты кампании (одинаковый для всех игроков)" placeholder="комната">
-                    </div>
-                    <button onclick="copyInviteLink()" class="text-xs text-stone-400 hover:text-stone-700 dark:hover:text-neutral-200 transition px-1.5 py-0.5 rounded hover:bg-stone-200/50 dark:hover:bg-neutral-800" title="Скопировать прямую ссылку со входом в эту комнату и базу">
-                        Копировать ссылку ↗
-                    </button>
-                </div>
-
-                <!-- Индикатор синхронизации -->
-                <div class="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400">
-                    <span id="statusDot" class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse-slow"></span>
-                    <span id="statusText">Онлайн • Реальное время</span>
-                </div>
-            </div>
-
-            <!-- Правая часть: Имя игрока, База, Тема -->
-            <div class="flex flex-wrap items-center gap-2">
-                <!-- Имя игрока -->
-                <div class="flex items-center bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-lg px-2.5 py-1.5 shadow-2xs">
-                    <span class="text-[11px] text-stone-400 dark:text-neutral-500 mr-2 select-none">Игрок:</span>
-                    <input type="text" id="playerNameInput" oninput="savePlayerName(this.value)" placeholder="Ваше имя..." class="text-xs font-medium bg-transparent focus:outline-none w-28 sm:w-32 text-stone-800 dark:text-neutral-200">
-                </div>
-
-                <!-- Кнопка настройки БД -->
-                <button onclick="toggleDbModal()" id="dbConfigBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:bg-stone-100 dark:hover:bg-neutral-800 transition flex items-center gap-1.5">
-                    <span id="dbModeBadge" class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                    <span>База (Firebase)</span>
-                </button>
-
-                <!-- Тема -->
-                <button onclick="toggleTheme()" class="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:bg-stone-100 dark:hover:bg-neutral-800 transition" title="Светлая / Тёмная тема">
-                    ◐
-                </button>
-            </div>
-        </header>
-
-        <!-- Модальная панель настройки Firebase Realtime Database (скрыта по умолчанию) -->
-        <section id="dbModal" class="hidden my-5 p-5 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm space-y-4 text-xs">
-            <div class="flex items-start justify-between gap-4">
-                <div>
-                    <h2 class="text-sm font-semibold text-stone-900 dark:text-neutral-100">Настройка общей базы данных в реальном времени</h2>
-                    <p class="text-stone-500 dark:text-neutral-400 mt-0.5">
-                        По умолчанию уже работает мгновенная P2P-синхронизация (Gun.js) по коду комнаты. Для 100% вечного хранения подключите бесплатную Google Firebase Realtime Database:
-                    </p>
-                </div>
-                <button onclick="toggleDbModal()" class="text-stone-400 hover:text-stone-700 dark:hover:text-neutral-200 text-sm px-1">✕</button>
-            </div>
-
-            <!-- Инструкция в 3 шага -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
-                <div class="p-3 rounded-lg bg-stone-50 dark:bg-neutral-950 border border-stone-200/60 dark:border-neutral-800/80 space-y-1">
-                    <div class="font-semibold text-stone-800 dark:text-neutral-200">Шаг 1. Создайте проект</div>
-                    <p class="text-stone-500 dark:text-neutral-400 leading-relaxed">
-                        Зайдите на <a href="https://console.firebase.google.com/" target="_blank" rel="noopener" class="underline hover:text-stone-800 dark:hover:text-neutral-200">console.firebase.google.com</a>, нажмите <b>Create a project</b> (бесплатно, без привязки карт).
-                    </p>
-                </div>
-                <div class="p-3 rounded-lg bg-stone-50 dark:bg-neutral-950 border border-stone-200/60 dark:border-neutral-800/80 space-y-1">
-                    <div class="font-semibold text-stone-800 dark:text-neutral-200">Шаг 2. Включите Realtime DB</div>
-                    <p class="text-stone-500 dark:text-neutral-400 leading-relaxed">
-                        В меню слева выберите <b>Build → Realtime Database → Create Database</b>. Выберите режим <b>Start in test mode</b> (открытый доступ).
-                    </p>
-                </div>
-                <div class="p-3 rounded-lg bg-stone-50 dark:bg-neutral-950 border border-stone-200/60 dark:border-neutral-800/80 space-y-1">
-                    <div class="font-semibold text-stone-800 dark:text-neutral-200">Шаг 3. Вставьте ссылку</div>
-                    <p class="text-stone-500 dark:text-neutral-400 leading-relaxed">
-                        Скопируйте URL вашей базы (вида <code class="text-[11px]">https://...firebaseio.com</code> или <code class="text-[11px]">...firebasedatabase.app</code>) в поле ниже или в константу <code class="text-[11px]">DEFAULT_FIREBASE_URL</code> в коде.
-                    </p>
-                </div>
-            </div>
-
-            <!-- Поле ввода URL базы -->
-            <div class="flex flex-col sm:flex-row gap-2 pt-1">
-                <input type="url" id="firebaseUrlInput" placeholder="https://your-project-default-rtdb.firebaseio.com" class="flex-1 px-3 py-2 rounded-lg bg-stone-50 dark:bg-neutral-950 border border-stone-200 dark:border-neutral-800 focus:outline-none focus:border-stone-400 dark:focus:border-neutral-600 font-mono text-xs">
-                <button onclick="saveFirebaseUrl()" class="px-4 py-2 rounded-lg bg-stone-900 text-white dark:bg-neutral-100 dark:text-neutral-900 font-medium hover:opacity-90 transition">
-                    Подключить базу
-                </button>
-                <button onclick="clearFirebaseUrl()" class="px-3 py-2 rounded-lg border border-stone-200 dark:border-neutral-800 text-stone-500 hover:text-stone-800 dark:hover:text-neutral-200 transition">
-                    Сбросить на P2P
-                </button>
-            </div>
-        </section>
-
-        <!-- Мобильный переключатель вкладок (виден только на экранах < lg) -->
-        <div class="flex lg:hidden items-center justify-between mt-5 mb-4">
-            <div class="inline-flex p-1 rounded-xl bg-stone-200/70 dark:bg-neutral-900 border border-stone-200/60 dark:border-neutral-800 w-full">
-                <button onclick="switchMobileTab('notes')" id="mob-tab-notes" class="flex-1 py-1.5 rounded-lg text-xs font-medium transition bg-white dark:bg-neutral-800 shadow-2xs text-stone-900 dark:text-white">
-                    Заметки (<span id="mobNotesCount">0</span>)
-                </button>
-                <button onclick="switchMobileTab('tasks')" id="mob-tab-tasks" class="flex-1 py-1.5 rounded-lg text-xs font-medium transition text-stone-500 dark:text-neutral-400">
-                    Задачи (<span id="mobTasksCount">0</span>)
-                </button>
-            </div>
-        </div>
-
-        <!-- Двухколоночная сетка на широком экране (Notion-style) -->
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 mt-6 items-start">
-
-            <!-- ==================== ЛЕВАЯ КОЛОНКА: ЗАМЕТКИ (7 колонок) ==================== -->
-            <main id="col-notes" class="lg:col-span-7 space-y-5">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500">Заметки партии</h2>
-                        <span id="notesCountBadge" class="text-xs text-stone-400 dark:text-neutral-600 font-mono">0</span>
-                    </div>
-                    <!-- Поиск -->
-                    <input type="text" id="searchInput" oninput="renderNotes()" placeholder="Поиск по заметкам..." class="w-44 sm:w-52 px-2.5 py-1 rounded-md text-xs bg-transparent border border-stone-200 dark:border-neutral-800 focus:outline-none focus:border-stone-400 dark:focus:border-neutral-600">
-                </div>
-
-                <!-- Форма создания / редактирования заметки -->
-                <form onsubmit="submitNote(event)" class="p-4 rounded-xl bg-white dark:bg-neutral-900/90 border border-stone-200/90 dark:border-neutral-800 shadow-2xs space-y-2.5">
-                    <input type="hidden" id="editingNoteId">
-                    <input type="text" id="noteTitle" required placeholder="Заголовок заметки..." class="w-full px-1 py-1 text-sm font-semibold bg-transparent border-b border-transparent focus:border-stone-200 dark:focus:border-neutral-800 focus:outline-none placeholder:font-normal placeholder:text-stone-400 dark:placeholder:text-neutral-500">
-                    <textarea id="noteText" required rows="3" placeholder="Запишите важные события сессии, имена НПС или улики..." class="w-full px-1 py-1 text-sm bg-transparent focus:outline-none leading-relaxed placeholder:text-stone-400 dark:placeholder:text-neutral-500"></textarea>
-                    
-                    <div class="flex items-center justify-between pt-2 border-t border-stone-100 dark:border-neutral-800/80">
-                        <span id="noteFormStatus" class="text-[11px] text-stone-400 dark:text-neutral-500">Видно всем участникам</span>
-                        <div class="flex items-center gap-2">
-                            <button type="button" id="cancelEditBtn" onclick="resetNoteForm()" class="hidden px-2.5 py-1 rounded-md text-xs text-stone-500 hover:bg-stone-100 dark:hover:bg-neutral-800 transition">
-                                Отмена
-                            </button>
-                            <button type="submit" id="submitNoteBtn" class="px-3.5 py-1.5 rounded-lg text-xs font-medium bg-stone-900 text-white dark:bg-neutral-200 dark:text-neutral-900 hover:opacity-90 transition">
-                                Опубликовать
-                            </button>
-                        </div>
-                    </div>
-                </form>
-
-                <!-- Список заметок -->
-                <div id="notesList" class="space-y-3"></div>
-            </main>
-
-            <!-- ==================== ПРАВАЯ КОЛОНКА: ЗАДАЧИ (5 колонок) ==================== -->
-            <aside id="col-tasks" class="lg:col-span-5 space-y-4 hidden lg:block">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500">Общие задачи</h2>
-                        <span id="tasksCountBadge" class="text-xs text-stone-400 dark:text-neutral-600 font-mono">0</span>
-                    </div>
-                    <div class="flex items-center gap-2.5 text-[11px] text-stone-400 dark:text-neutral-500">
-                        <button onclick="setTaskFilter('all')" id="filter-all" class="text-stone-800 dark:text-neutral-200 font-medium">Все</button>
-                        <button onclick="setTaskFilter('active')" id="filter-active" class="hover:text-stone-700 dark:hover:text-neutral-300">Активные</button>
-                        <button onclick="setTaskFilter('done')" id="filter-done" class="hover:text-stone-700 dark:hover:text-neutral-300">Готовые</button>
-                    </div>
-                </div>
-
-                <!-- Форма добавления задачи -->
-                <form onsubmit="submitTask(event)" class="flex gap-2">
-                    <input type="text" id="taskInput" required placeholder="Новая задача для отряда..." class="flex-1 px-3 py-2 rounded-xl text-xs sm:text-sm bg-white dark:bg-neutral-900/90 border border-stone-200/90 dark:border-neutral-800 focus:outline-none focus:border-stone-400 dark:focus:border-neutral-600 shadow-2xs">
-                    <button type="submit" class="px-3.5 py-2 rounded-xl text-xs font-medium bg-stone-900 text-white dark:bg-neutral-200 dark:text-neutral-900 hover:opacity-90 transition shrink-0">
-                        Добавить
-                    </button>
-                </form>
-
-                <!-- Список задач -->
-                <div id="tasksList" class="rounded-xl bg-white dark:bg-neutral-900/90 border border-stone-200/90 dark:border-neutral-800 divide-y divide-stone-100 dark:divide-neutral-800/70 shadow-2xs overflow-hidden"></div>
-            </aside>
-
-        </div>
+  <!-- ================= ВЕРХНЯЯ ПАНЕЛЬ (СТАТУС, ИМЯ, РЕЖИМ ДМ) ================= -->
+  <div class="fixed top-3 left-3 right-3 flex items-center justify-between pointer-events-none z-20">
+    <!-- Левый блок: Статус общей базы и имя игрока -->
+    <div class="glass px-3 py-1.5 rounded-xl flex items-center gap-3 pointer-events-auto shadow-lg">
+      <div class="flex items-center gap-2" title="Автоматическая общая синхронизация включена">
+        <span id="sync-dot" class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+        <span id="sync-text" class="text-xs font-medium text-slate-300">Подключение...</span>
+      </div>
+      <div class="h-4 w-[1px] bg-slate-700"></div>
+      <input id="player-name" type="text" placeholder="Ваше имя" 
+        class="bg-slate-800/80 text-xs text-white px-2.5 py-1 rounded-lg border border-slate-700 focus:outline-none focus:border-indigo-500 w-28"
+         value="">
+      <button id="dm-toggle" onclick="toggleDM()" 
+        class="text-xs px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-800/60 text-slate-400 hover:text-white transition">
+        👑 Режим ДМ: ВЫКЛ
+      </button>
     </div>
 
-    <!-- Уведомление -->
-    <div id="toast" class="fixed bottom-4 right-4 hidden px-3.5 py-2 rounded-lg bg-stone-900 text-white dark:bg-neutral-100 dark:text-neutral-900 text-xs font-medium shadow-lg z-50">
-        Сохранено
+    <!-- Правый блок: Кнопки открытия Заметок/Задач и Карты -->
+    <div class="glass p-1.5 rounded-xl flex items-center gap-1.5 pointer-events-auto shadow-lg">
+      <button onclick="centerCamera()" class="px-2.5 py-1.5 rounded-lg text-xs text-slate-300 hover:bg-slate-800 transition" title="Вернуть камеру в центр">
+        🎯 Центр
+      </button>
+      <button onclick="toggleSidebar('notes')" id="btn-tab-notes" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white transition flex items-center gap-1.5">
+        📓 Заметки <span id="notes-count" class="bg-black/30 px-1.5 py-0.2 rounded text-[10px]">0</span>
+      </button>
+      <button onclick="toggleSidebar('tasks')" id="btn-tab-tasks" class="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition flex items-center gap-1.5">
+        ✅ Задачи <span id="tasks-count" class="bg-slate-800 px-1.5 py-0.2 rounded text-[10px]">0</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ================= НИЖНИЙ ДОК ИНСТРУМЕНТОВ OWLBEAR RODEO ================= -->
+  <div class="fixed bottom-4 left-1/2 -translate-x-1/2 glass px-2.5 py-2 rounded-2xl flex items-center gap-1.5 shadow-2xl z-20">
+    <button onclick="setTool('move')" id="tool-move" class="tool-btn active px-3 py-2 rounded-xl text-xs font-medium flex items-center gap-1.5" title="Двигать карту и токены (Пробел / ЛКМ)">
+      ✋ Рука / Токены
+    </button>
+    <button onclick="setTool('measure')" id="tool-measure" class="tool-btn px-3 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 flex items-center gap-1.5" title="Измерить расстояние в футах (5ft клетка)">
+      📏 Линейка
+    </button>
+    <button onclick="setTool('draw')" id="tool-draw" class="tool-btn px-3 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 flex items-center gap-1.5" title="Рисовать маркером на карте">
+      ✏️ Маркер
+    </button>
+    <button onclick="clearDrawings()" class="px-2 py-2 rounded-xl text-xs text-slate-400 hover:text-rose-400 hover:bg-slate-800" title="Очистить все рисунки">
+      🗑️
+    </button>
+
+    <div class="h-6 w-[1px] bg-slate-700 mx-1"></div>
+
+    <!-- Добавление токенов -->
+    <button onclick="openTokenModal()" class="px-3 py-2 rounded-xl text-xs font-medium bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-600/30 flex items-center gap-1.5">
+      ➕ Токен
+    </button>
+
+    <!-- Инструменты ДМа (Туман войны и Смена карты) -->
+    <div id="dm-tools" class="hidden items-center gap-1.5 pl-1 border-l border-slate-700">
+      <button onclick="setTool('fog')" id="tool-fog" class="tool-btn px-3 py-2 rounded-xl text-xs font-medium text-amber-300 hover:bg-slate-800 flex items-center gap-1.5" title="Кликайте или ведите по клеткам, чтобы скрыть/открыть Туман Войны">
+        ☁️ Туман
+      </button>
+      <button onclick="fillAllFog()" class="px-2.5 py-2 rounded-xl text-xs text-slate-300 hover:bg-slate-800" title="Залить всю карту туманом">
+        🌑 Скрыть всё
+      </button>
+      <button onclick="clearAllFog()" class="px-2.5 py-2 rounded-xl text-xs text-slate-300 hover:bg-slate-800" title="Убрать весь туман">
+        ☀️ Открыть
+      </button>
+      <button onclick="openMapModal()" class="px-3 py-2 rounded-xl text-xs font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30">
+        🗺️ Карта
+      </button>
+    </div>
+  </div>
+
+  <!-- ================= ПАНЕЛЬ КУБИКОВ (СЛЕВА ВНИЗУ) ================= -->
+  <div class="fixed bottom-4 left-4 glass p-2 rounded-2xl flex flex-col gap-1.5 z-20 shadow-xl">
+    <div id="dice-toast" class="hidden text-xs px-2.5 py-1.5 rounded-lg bg-indigo-950/90 border border-indigo-500/40 text-indigo-200 max-w-[210px] mb-1"></div>
+    <div class="flex items-center gap-1">
+      <button onclick="rollDice(4)" class="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-indigo-600 text-xs font-semibold transition">d4</button>
+      <button onclick="rollDice(6)" class="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-indigo-600 text-xs font-semibold transition">d6</button>
+      <button onclick="rollDice(8)" class="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-indigo-600 text-xs font-semibold transition">d8</button>
+      <button onclick="rollDice(10)" class="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-indigo-600 text-xs font-semibold transition">d10</button>
+      <button onclick="rollDice(12)" class="px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-indigo-600 text-xs font-semibold transition">d12</button>
+      <button onclick="rollDice(20)" class="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition">d20</button>
+    </div>
+  </div>
+
+  <!-- ================= КОНТЕКСТНОЕ МЕНЮ ТОКЕНА (ПРИ КЛИКЕ НА ТОКЕН) ================= -->
+  <div id="token-inspector" class="hidden fixed top-16 left-4 glass p-3 rounded-2xl w-64 z-20 shadow-2xl">
+    <div class="flex items-center justify-between mb-2">
+      <span id="insp-name" class="font-semibold text-sm text-white truncate">Герой</span>
+      <button onclick="closeInspector()" class="text-slate-400 hover:text-white text-xs">✕</button>
+    </div>
+    <div class="flex items-center gap-2 mb-2">
+      <label class="text-xs text-slate-400">ХП:</label>
+      <input id="insp-hp" type="text" placeholder="25/25" onchange="updateSelectedToken('hp', this.value)"
+        class="bg-slate-800 text-xs text-white px-2 py-1 rounded border border-slate-700 w-24">
+      <label class="text-xs text-slate-400 ml-1">Размер:</label>
+      <select id="insp-size" onchange="updateSelectedToken('size', Number(this.value))"
+        class="bg-slate-800 text-xs text-white px-1.5 py-1 rounded border border-slate-700">
+        <option value="1">1x1</option>
+        <option value="2">2x2</option>
+        <option value="3">3x3</option>
+      </select>
+    </div>
+    <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+      <button onclick="deleteSelectedToken()" class="text-xs text-rose-400 hover:text-rose-300">🗑️ Удалить с поля</button>
+    </div>
+  </div>
+
+  <!-- ================= БОКОВАЯ ПАНЕЛЬ: ОБЩИЕ ЗАМЕТКИ И ЗАДАЧИ ================= -->
+  <aside id="sidebar" class="fixed top-16 right-3 bottom-20 w-80 sm:w-96 glass rounded-2xl flex flex-col z-20 shadow-2xl transition-transform duration-200">
+    <!-- Шапка панели -->
+    <div class="p-3.5 border-b border-slate-800 flex items-center justify-between">
+      <h2 id="sidebar-title" class="text-sm font-semibold text-white">📓 Общие заметки партии</h2>
+      <button onclick="closeSidebar()" class="text-xs text-slate-400 hover:text-white px-2 py-0.5 rounded hover:bg-slate-800">Скрыть ✕</button>
     </div>
 
-    <script>
-        /**
-         * ============================================================================
-         * НАСТРОЙКА ДЛЯ ДМА ПЕРЕД ЗАГРУЗКОЙ НА GITHUB PAGES (НЕОБЯЗАТЕЛЬНО):
-         * Если вы создали бесплатную базу Firebase, можете вставить её ссылку прямо сюда,
-         * чтобы у всех игроков она открывалась автоматически без настроек:
-         * ============================================================================
-         */
-        const DEFAULT_FIREBASE_URL = ''; // Например: 'https://my-dnd-party-default-rtdb.europe-west1.firebasedatabase.app'
-        const DEFAULT_ROOM_CODE = 'phandalin-party';
-
-        // Ключи локального хранилища браузера
-        const LS_PLAYER_NAME = 'dnd_min_player_name';
-        const LS_THEME = 'dnd_min_theme';
-        const LS_ROOM = 'dnd_min_room';
-        const LS_FB_URL = 'dnd_min_firebase_url';
-        const LS_CACHE_PREFIX = 'dnd_min_cache_';
-
-        // Текущее состояние
-        let roomCode = DEFAULT_ROOM_CODE;
-        let firebaseUrl = DEFAULT_FIREBASE_URL;
-        let playerName = '';
-        let currentTaskFilter = 'all';
-
-        // Хранилище объектов в памяти: { id: { id, title, text, author, createdAt, updatedAt, deleted } }
-        let notesMap = {};
-        let tasksMap = {};
-
-        // Экземпляры синхронизации
-        let gun = null;
-        let gunRoom = null;
-        let fbEventSource = null;
-        let fbPollTimer = null;
-
-        // ==================== ИНИЦИАЛИЗАЦИЯ ====================
-        window.onload = () => {
-            initTheme();
-            parseUrlHashParams();
-            initUserSettings();
-            connectRealtimeBackend();
-        };
-
-        // Чтение параметров из URL (#room=...&db=...) для удобного приглашения игроков одной ссылкой
-        function parseUrlHashParams() {
-            const hash = window.location.hash.substring(1);
-            if (!hash) return;
-            const params = new URLSearchParams(hash);
-            if (params.get('room')) {
-                localStorage.setItem(LS_ROOM, sanitizeRoom(params.get('room')));
-            }
-            if (params.get('db')) {
-                localStorage.setItem(LS_FB_URL, cleanFirebaseUrl(params.get('db')));
-            }
-        }
-
-        function initUserSettings() {
-            playerName = localStorage.getItem(LS_PLAYER_NAME) || '';
-            document.getElementById('playerNameInput').value = playerName;
-
-            roomCode = sanitizeRoom(localStorage.getItem(LS_ROOM) || DEFAULT_ROOM_CODE);
-            document.getElementById('roomInput').value = roomCode;
-
-            const savedFb = localStorage.getItem(LS_FB_URL);
-            firebaseUrl = cleanFirebaseUrl(savedFb !== null ? savedFb : DEFAULT_FIREBASE_URL);
-            document.getElementById('firebaseUrlInput').value = firebaseUrl;
-        }
-
-        function savePlayerName(val) {
-            playerName = val.trim();
-            localStorage.setItem(LS_PLAYER_NAME, playerName);
-        }
-
-        function sanitizeRoom(str) {
-            return (str || DEFAULT_ROOM_CODE).trim().toLowerCase().replace(/[^a-zа-яё0-9_-]/gi, '-') || DEFAULT_ROOM_CODE;
-        }
-
-        function cleanFirebaseUrl(url) {
-            if (!url) return '';
-            let u = url.trim().replace(/\/+$/, '');
-            if (u && !u.startsWith('http')) u = 'https://' + u;
-            return u;
-        }
-
-        // ==================== ПОДКЛЮЧЕНИЕ К ОБЩЕЙ БАЗЕ ДАННЫХ ====================
-        function connectRealtimeBackend() {
-            // Останавливаем старые подписки
-            if (fbEventSource) { fbEventSource.close(); fbEventSource = null; }
-            if (fbPollTimer) { clearInterval(fbPollTimer); fbPollTimer = null; }
-
-            // Загружаем локальный кэш этой комнаты для мгновенного старта
-            loadLocalCache();
-            renderAll();
-
-            const badge = document.getElementById('dbModeBadge');
-
-            if (firebaseUrl) {
-                badge.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500';
-                setStatus('online', 'Firebase • Синхронизация в реальном времени');
-                startFirebaseSync();
-            } else {
-                badge.className = 'w-1.5 h-1.5 rounded-full bg-amber-500';
-                setStatus('online', `P2P Облако (комната #${roomCode}) • Синхронизировано`);
-                startGunSync();
-            }
-        }
-
-        // Вариант 1: Firebase Realtime Database (Server-Sent Events + REST)
-        async function startFirebaseSync() {
-            const roomEndpoint = `${firebaseUrl}/campaigns/${encodeURIComponent(roomCode)}.json`;
-
-            // Первичная загрузка
-            await fetchFirebaseSnapshot(roomEndpoint);
-
-            // Подписка на поток событий в реальном времени (SSE)
-            try {
-                fbEventSource = new EventSource(roomEndpoint);
-                fbEventSource.addEventListener('put', (e) => {
-                    try {
-                        const packet = JSON.parse(e.data);
-                        applyFirebasePacket(packet.path, packet.data);
-                        setStatus('online', 'Firebase • Синхронизировано');
-                    } catch (err) { console.error(err); }
-                });
-                fbEventSource.addEventListener('patch', (e) => {
-                    try {
-                        const packet = JSON.parse(e.data);
-                        applyFirebasePacket(packet.path, packet.data);
-                        setStatus('online', 'Firebase • Синхронизировано');
-                    } catch (err) { console.error(err); }
-                });
-                fbEventSource.onerror = () => {
-                    // Если SSE недоступен, фоллбэк на частый пуллинг
-                    if (!fbPollTimer) {
-                        fbPollTimer = setInterval(() => fetchFirebaseSnapshot(roomEndpoint), 3500);
-                    }
-                };
-            } catch (e) {
-                fbPollTimer = setInterval(() => fetchFirebaseSnapshot(roomEndpoint), 3500);
-            }
-        }
-
-        async function fetchFirebaseSnapshot(endpoint) {
-            try {
-                const res = await fetch(endpoint);
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                const data = await res.json();
-                notesMap = (data && data.notes) ? data.notes : {};
-                tasksMap = (data && data.tasks) ? data.tasks : {};
-                saveLocalCache();
-                renderAll();
-                setStatus('online', 'Firebase • Синхронизировано');
-            } catch (err) {
-                setStatus('error', 'Ошибка доступа к Firebase (проверьте URL и Rules: true)');
-            }
-        }
-
-        function applyFirebasePacket(path, data) {
-            if (path === '/') {
-                notesMap = (data && data.notes) ? data.notes : {};
-                tasksMap = (data && data.tasks) ? data.tasks : {};
-            } else if (path.startsWith('/notes/')) {
-                const id = path.replace('/notes/', '').split('/')[0];
-                if (data === null) delete notesMap[id];
-                else notesMap[id] = { ...(notesMap[id] || {}), ...data };
-            } else if (path === '/notes') {
-                notesMap = data || {};
-            } else if (path.startsWith('/tasks/')) {
-                const id = path.replace('/tasks/', '').split('/')[0];
-                if (data === null) delete tasksMap[id];
-                else tasksMap[id] = { ...(tasksMap[id] || {}), ...data };
-            } else if (path === '/tasks') {
-                tasksMap = data || {};
-            }
-            saveLocalCache();
-            renderAll();
-        }
-
-        // Вариант 2: Gun.js (встроенная P2P база без регистрации)
-        function startGunSync() {
-            try {
-                if (!gun) {
-                    gun = Gun({
-                        peers: [
-                            'https://gun-manhattan.herokuapp.com/gun',
-                            'https://peer.wallie.io/gun',
-                            'https://gundb-relay-mlccl.ondigitalocean.app/gun'
-                        ],
-                        localStorage: false
-                    });
-                }
-
-                gunRoom = gun.get('dnd_minimal_shared_v2_' + roomCode);
-
-                // Подписка на заметки
-                gunRoom.get('notes').map().on((data, id) => {
-                    if (!id) return;
-                    if (!data || data.deleted) {
-                        if (notesMap[id]) {
-                            delete notesMap[id];
-                            saveLocalCache();
-                            renderNotes();
-                        }
-                        return;
-                    }
-                    if (data.title && data.text) {
-                        notesMap[id] = {
-                            id: id,
-                            title: data.title,
-                            text: data.text,
-                            author: data.author || 'Игрок',
-                            createdAt: data.createdAt || Date.now(),
-                            updatedAt: data.updatedAt || Date.now()
-                        };
-                        saveLocalCache();
-                        renderNotes();
-                    }
-                });
-
-                // Подписка на задачи
-                gunRoom.get('tasks').map().on((data, id) => {
-                    if (!id) return;
-                    if (!data || data.deleted) {
-                        if (tasksMap[id]) {
-                            delete tasksMap[id];
-                            saveLocalCache();
-                            renderTasks();
-                        }
-                        return;
-                    }
-                    if (data.text) {
-                        tasksMap[id] = {
-                            id: id,
-                            text: data.text,
-                            done: Boolean(data.done),
-                            author: data.author || 'Игрок',
-                            createdAt: data.createdAt || Date.now()
-                        };
-                        saveLocalCache();
-                        renderTasks();
-                    }
-                });
-            } catch (e) {
-                console.error('Gun init error:', e);
-            }
-        }
-
-        // Универсальная запись/удаление объекта в активную БД
-        async function syncWriteItem(collection, id, payload) {
-            if (collection === 'notes') {
-                if (payload === null) delete notesMap[id];
-                else notesMap[id] = payload;
-            } else {
-                if (payload === null) delete tasksMap[id];
-                else tasksMap[id] = payload;
-            }
-            saveLocalCache();
-            renderAll();
-
-            // Отправка в Firebase
-            if (firebaseUrl) {
-                const itemUrl = `${firebaseUrl}/campaigns/${encodeURIComponent(roomCode)}/${collection}/${id}.json`;
-                try {
-                    await fetch(itemUrl, {
-                        method: payload === null ? 'DELETE' : 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: payload === null ? null : JSON.stringify(payload)
-                    });
-                } catch (e) {
-                    showToast('Ошибка отправки в Firebase');
-                }
-            } else if (gunRoom) {
-                // Отправка в Gun.js
-                if (payload === null) {
-                    gunRoom.get(collection).get(id).put({ deleted: true, updatedAt: Date.now() });
-                } else {
-                    gunRoom.get(collection).get(id).put({ ...payload, deleted: false });
-                }
-            }
-        }
-
-        // ==================== РАБОТА С ЗАМЕТКАМИ ====================
-        function submitNote(e) {
-            e.preventDefault();
-            const editId = document.getElementById('editingNoteId').value;
-            const title = document.getElementById('noteTitle').value.trim();
-            const text = document.getElementById('noteText').value.trim();
-            if (!title || !text) return;
-
-            const author = playerName || 'Аноним';
-            const now = Date.now();
-
-            if (editId && notesMap[editId]) {
-                const updated = {
-                    ...notesMap[editId],
-                    title,
-                    text,
-                    author: notesMap[editId].author || author,
-                    updatedAt: now
-                };
-                resetNoteForm();
-                syncWriteItem('notes', editId, updated);
-                showToast('Заметка обновлена у всех');
-            } else {
-                const id = 'n_' + now + '_' + Math.random().toString(36).substring(2, 6);
-                const newNote = {
-                    id,
-                    title,
-                    text,
-                    author,
-                    createdAt: now,
-                    updatedAt: now
-                };
-                resetNoteForm();
-                syncWriteItem('notes', id, newNote);
-                showToast('Заметка опубликована');
-            }
-        }
-
-        function startEditNote(id) {
-            const note = notesMap[id];
-            if (!note) return;
-            document.getElementById('editingNoteId').value = note.id;
-            document.getElementById('noteTitle').value = note.title;
-            document.getElementById('noteText').value = note.text;
-            document.getElementById('noteFormStatus').textContent = 'Редактирование записи';
-            document.getElementById('submitNoteBtn').textContent = 'Сохранить';
-            document.getElementById('cancelEditBtn').classList.remove('hidden');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-
-        function resetNoteForm() {
-            document.getElementById('editingNoteId').value = '';
-            document.getElementById('noteTitle').value = '';
-            document.getElementById('noteText').value = '';
-            document.getElementById('noteFormStatus').textContent = 'Видно всем участникам';
-            document.getElementById('submitNoteBtn').textContent = 'Опубликовать';
-            document.getElementById('cancelEditBtn').classList.add('hidden');
-        }
-
-        function deleteNote(id) {
-            if (document.getElementById('editingNoteId').value === id) resetNoteForm();
-            syncWriteItem('notes', id, null);
-            showToast('Заметка удалена');
-        }
-
-        function renderNotes() {
-            const container = document.getElementById('notesList');
-            const query = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
-
-            const allNotes = Object.values(notesMap)
-                .filter(n => n && !n.deleted && n.title)
-                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-
-            document.getElementById('notesCountBadge').textContent = allNotes.length;
-            document.getElementById('mobNotesCount').textContent = allNotes.length;
-
-            const filtered = allNotes.filter(n => {
-                if (!query) return true;
-                return n.title.toLowerCase().includes(query) ||
-                       n.text.toLowerCase().includes(query) ||
-                       (n.author || '').toLowerCase().includes(query);
-            });
-
-            if (filtered.length === 0) {
-                container.innerHTML = `
-                    <div class="py-12 px-4 text-center text-xs text-stone-400 dark:text-neutral-500 border border-dashed border-stone-200 dark:border-neutral-800/80 rounded-xl">
-                        Заметок пока нет. Добавьте первую запись выше — она сразу появится у всей партии.
-                    </div>`;
-                return;
-            }
-
-            container.innerHTML = filtered.map(n => `
-                <article class="p-4 sm:p-5 rounded-xl bg-white dark:bg-neutral-900/90 border border-stone-200/90 dark:border-neutral-800 shadow-2xs space-y-2 group transition">
-                    <div class="flex items-start justify-between gap-3">
-                        <h3 class="text-sm sm:text-base font-semibold text-stone-900 dark:text-neutral-100 leading-snug">${escapeHtml(n.title)}</h3>
-                        <div class="flex items-center gap-2.5 shrink-0 text-[11px] text-stone-400 dark:text-neutral-500">
-                            <button onclick="startEditNote('${n.id}')" class="opacity-70 group-hover:opacity-100 hover:text-stone-800 dark:hover:text-neutral-200 transition">Изменить</button>
-                            <button onclick="deleteNote('${n.id}')" class="opacity-70 group-hover:opacity-100 hover:text-red-500 transition">Удалить</button>
-                        </div>
-                    </div>
-                    <p class="text-sm text-stone-700 dark:text-neutral-300 whitespace-pre-line leading-relaxed font-serif text-[15px]">${escapeHtml(n.text)}</p>
-                    <div class="pt-1 flex items-center gap-2 text-[11px] text-stone-400 dark:text-neutral-500">
-                        <span class="font-medium text-stone-500 dark:text-neutral-400">${escapeHtml(n.author || 'Игрок')}</span>
-                        <span>•</span>
-                        <span>${formatTime(n.createdAt)}</span>
-                    </div>
-                </article>
-            `).join('');
-        }
-
-        // ==================== РАБОТА С ЗАДАЧАМИ ====================
-        function submitTask(e) {
-            e.preventDefault();
-            const input = document.getElementById('taskInput');
-            const text = input.value.trim();
-            if (!text) return;
-
-            const now = Date.now();
-            const id = 't_' + now + '_' + Math.random().toString(36).substring(2, 6);
-            const newTask = {
-                id,
-                text,
-                done: false,
-                author: playerName || 'Аноним',
-                createdAt: now
-            };
-
-            input.value = '';
-            syncWriteItem('tasks', id, newTask);
-        }
-
-        function toggleTask(id) {
-            const t = tasksMap[id];
-            if (!t) return;
-            syncWriteItem('tasks', id, { ...t, done: !t.done });
-        }
-
-        function deleteTask(id) {
-            syncWriteItem('tasks', id, null);
-        }
-
-        function setTaskFilter(filter) {
-            currentTaskFilter = filter;
-            ['all', 'active', 'done'].forEach(f => {
-                const btn = document.getElementById('filter-' + f);
-                if (f === filter) {
-                    btn.className = 'text-stone-800 dark:text-neutral-200 font-medium';
-                } else {
-                    btn.className = 'hover:text-stone-700 dark:hover:text-neutral-300';
-                }
-            });
-            renderTasks();
-        }
-
-        function renderTasks() {
-            const container = document.getElementById('tasksList');
-            const allTasks = Object.values(tasksMap)
-                .filter(t => t && !t.deleted && t.text)
-                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-
-            const activeCount = allTasks.filter(t => !t.done).length;
-            document.getElementById('tasksCountBadge').textContent = activeCount;
-            document.getElementById('mobTasksCount').textContent = activeCount;
-
-            const filtered = allTasks.filter(t => {
-                if (currentTaskFilter === 'active') return !t.done;
-                if (currentTaskFilter === 'done') return t.done;
-                return true;
-            });
-
-            if (filtered.length === 0) {
-                container.innerHTML = `<div class="p-8 text-center text-xs text-stone-400 dark:text-neutral-500">Список задач пуст.</div>`;
-                return;
-            }
-
-            container.innerHTML = filtered.map(t => `
-                <div class="flex items-start justify-between gap-3 px-3.5 py-3 group hover:bg-stone-50/80 dark:hover:bg-neutral-800/40 transition">
-                    <label class="flex items-start gap-2.5 flex-1 cursor-pointer select-none">
-                        <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTask('${t.id}')" class="mt-0.5 w-4 h-4 rounded accent-stone-800 dark:accent-neutral-300 cursor-pointer shrink-0">
-                        <div class="space-y-0.5">
-                            <div class="text-xs sm:text-sm leading-snug ${t.done ? 'line-through text-stone-400 dark:text-neutral-500' : 'text-stone-800 dark:text-neutral-200'}">${escapeHtml(t.text)}</div>
-                            <div class="text-[10px] text-stone-400 dark:text-neutral-500">${escapeHtml(t.author || 'Игрок')}</div>
-                        </div>
-                    </label>
-                    <button onclick="deleteTask('${t.id}')" class="text-xs text-stone-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition px-1" title="Удалить задачу">
-                        ✕
-                    </button>
-                </div>
-            `).join('');
-        }
-
-        function renderAll() {
-            renderNotes();
-            renderTasks();
-        }
-
-        // ==================== УПРАВЛЕНИЕ КОМНАТОЙ, БАЗОЙ И ССЫЛКОЙ ====================
-        function changeRoom(val) {
-            roomCode = sanitizeRoom(val);
-            document.getElementById('roomInput').value = roomCode;
-            localStorage.setItem(LS_ROOM, roomCode);
-            notesMap = {};
-            tasksMap = {};
-            connectRealtimeBackend();
-            showToast('Переключено в комнату #' + roomCode);
-        }
-
-        function toggleDbModal() {
-            document.getElementById('dbModal').classList.toggle('hidden');
-        }
-
-        function saveFirebaseUrl() {
-            const raw = document.getElementById('firebaseUrlInput').value;
-            firebaseUrl = cleanFirebaseUrl(raw);
-            document.getElementById('firebaseUrlInput').value = firebaseUrl;
-            localStorage.setItem(LS_FB_URL, firebaseUrl);
-            document.getElementById('dbModal').classList.add('hidden');
-            connectRealtimeBackend();
-            showToast(firebaseUrl ? 'Firebase подключен' : 'Включен P2P-режим');
-        }
-
-        function clearFirebaseUrl() {
-            firebaseUrl = '';
-            document.getElementById('firebaseUrlInput').value = '';
-            localStorage.removeItem(LS_FB_URL);
-            document.getElementById('dbModal').classList.add('hidden');
-            connectRealtimeBackend();
-            showToast('Переключено на встроенный P2P-режим');
-        }
-
-        function copyInviteLink() {
-            const base = window.location.href.split('#')[0];
-            const params = new URLSearchParams();
-            params.set('room', roomCode);
-            if (firebaseUrl) params.set('db', firebaseUrl);
-            const shareUrl = `${base}#${params.toString()}`;
-
-            const area = document.createElement('textarea');
-            area.value = shareUrl;
-            document.body.appendChild(area);
-            area.select();
-            document.execCommand('copy');
-            document.body.removeChild(area);
-            showToast('Ссылка для игроков скопирована');
-        }
-
-        // ==================== ЛОКАЛЬНЫЙ КЭШ И ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
-        function loadLocalCache() {
-            try {
-                const raw = localStorage.getItem(LS_CACHE_PREFIX + roomCode);
-                if (raw) {
-                    const parsed = JSON.parse(raw);
-                    notesMap = parsed.notes || {};
-                    tasksMap = parsed.tasks || {};
-                    return;
-                }
-            } catch (e) {}
-            notesMap = {};
-            tasksMap = {};
-        }
-
-        function saveLocalCache() {
-            try {
-                localStorage.setItem(LS_CACHE_PREFIX + roomCode, JSON.stringify({
-                    notes: notesMap,
-                    tasks: tasksMap
-                }));
-            } catch (e) {}
-        }
-
-        function setStatus(state, text) {
-            const dot = document.getElementById('statusDot');
-            const label = document.getElementById('statusText');
-            label.textContent = text;
-            if (state === 'online') {
-                dot.className = 'inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse-slow';
-            } else {
-                dot.className = 'inline-block w-2 h-2 rounded-full bg-red-500';
-            }
-        }
-
-        function switchMobileTab(tab) {
-            const colNotes = document.getElementById('col-notes');
-            const colTasks = document.getElementById('col-tasks');
-            const btnNotes = document.getElementById('mob-tab-notes');
-            const btnTasks = document.getElementById('mob-tab-tasks');
-
-            if (tab === 'notes') {
-                colNotes.classList.remove('hidden');
-                colTasks.classList.add('hidden');
-                btnNotes.className = 'flex-1 py-1.5 rounded-lg text-xs font-medium transition bg-white dark:bg-neutral-800 shadow-2xs text-stone-900 dark:text-white';
-                btnTasks.className = 'flex-1 py-1.5 rounded-lg text-xs font-medium transition text-stone-500 dark:text-neutral-400';
-            } else {
-                colNotes.classList.add('hidden');
-                colTasks.classList.remove('hidden');
-                btnTasks.className = 'flex-1 py-1.5 rounded-lg text-xs font-medium transition bg-white dark:bg-neutral-800 shadow-2xs text-stone-900 dark:text-white';
-                btnNotes.className = 'flex-1 py-1.5 rounded-lg text-xs font-medium transition text-stone-500 dark:text-neutral-400';
-            }
-        }
-
-        function toggleTheme() {
-            const isDark = document.documentElement.classList.toggle('dark');
-            localStorage.setItem(LS_THEME, isDark ? 'dark' : 'light');
-        }
-
-        function initTheme() {
-            const saved = localStorage.getItem(LS_THEME);
-            if (saved === 'light') {
-                document.documentElement.classList.remove('dark');
-            } else {
-                document.documentElement.classList.add('dark');
-            }
-        }
-
-        function formatTime(ts) {
-            if (!ts) return '';
-            const d = new Date(ts);
-            return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ' в ' +
-                   d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-        }
-
-        function showToast(msg) {
-            const t = document.getElementById('toast');
-            t.textContent = msg;
-            t.classList.remove('hidden');
-            clearTimeout(window._toastTimer);
-            window._toastTimer = setTimeout(() => t.classList.add('hidden'), 2400);
-        }
-
-        function escapeHtml(str) {
-            if (!str) return '';
-            return String(str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;');
-        }
-    </script>
+    <!-- Вкладка: ЗАМЕТКИ -->
+    <div id="panel-notes" class="flex-1 flex flex-col overflow-hidden p-3 gap-3">
+      <div class="flex flex-col gap-2 bg-slate-900/70 p-2.5 rounded-xl border border-slate-800">
+        <input id="note-title" type="text" placeholder="Заголовок заметки..." 
+          class="bg-transparent text-xs font-semibold text-white placeholder-slate-500 focus:outline-none">
+        <textarea id="note-body" rows="2" placeholder="Напишите заметку — она сразу появится у всех..." 
+          class="bg-transparent text-xs text-slate-300 placeholder-slate-500 focus:outline-none resize-none"></textarea>
+        <div class="flex justify-end">
+          <button onclick="addNote()" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition">
+            Опубликовать
+          </button>
+        </div>
+      </div>
+      <div id="notes-list" class="flex-1 overflow-y-auto space-y-2 pr-1"></div>
+    </div>
+
+    <!-- Вкладка: ЗАДАЧИ -->
+    <div id="panel-tasks" class="hidden flex-1 flex flex-col overflow-hidden p-3 gap-3">
+      <form onsubmit="event.preventDefault(); addTask();" class="flex gap-1.5">
+        <input id="task-input" type="text" placeholder="Новая общая задача или квест..." 
+          class="flex-1 bg-slate-900/80 text-xs text-white px-3 py-2 rounded-xl border border-slate-800 focus:outline-none focus:border-indigo-500">
+        <button type="submit" class="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium">
+          +
+        </button>
+      </form>
+      <div id="tasks-list" class="flex-1 overflow-y-auto space-y-1.5 pr-1"></div>
+    </div>
+  </aside>
+
+  <!-- ================= МОДАЛКА ДОБАВЛЕНИЯ ТОКЕНА ================= -->
+  <div id="token-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-30 p-4">
+    <div class="glass p-5 rounded-2xl w-full max-w-sm shadow-2xl">
+      <h3 class="text-sm font-semibold text-white mb-3">Добавить токен на карту</h3>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs text-slate-400 block mb-1">Имя персонажа / монстра</label>
+          <input id="new-token-name" type="text" placeholder="Например: Гоблин или Артур" 
+            class="w-full bg-slate-900 text-xs text-white px-3 py-2 rounded-xl border border-slate-700">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-xs text-slate-400 block mb-1">ХП (опционально)</label>
+            <input id="new-token-hp" type="text" placeholder="30/30" 
+              class="w-full bg-slate-900 text-xs text-white px-3 py-2 rounded-xl border border-slate-700">
+          </div>
+          <div>
+            <label class="text-xs text-slate-400 block mb-1">Размер (клеток)</label>
+            <select id="new-token-size" class="w-full bg-slate-900 text-xs text-white px-3 py-2 rounded-xl border border-slate-700">
+              <option value="1">1x1 (Средний)</option>
+              <option value="2">2x2 (Большой)</option>
+              <option value="3">3x3 (Огромный)</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs text-slate-400 block mb-1">Цвет фишки</label>
+          <div class="flex gap-2" id="color-picker">
+            <button type="button" onclick="selectTokenColor('#4f46e5')" class="w-7 h-7 rounded-full bg-indigo-600 ring-2 ring-white"></button>
+            <button type="button" onclick="selectTokenColor('#10b981')" class="w-7 h-7 rounded-full bg-emerald-500"></button>
+            <button type="button" onclick="selectTokenColor('#ef4444')" class="w-7 h-7 rounded-full bg-red-500"></button>
+            <button type="button" onclick="selectTokenColor('#f59e0b')" class="w-7 h-7 rounded-full bg-amber-500"></button>
+            <button type="button" onclick="selectTokenColor('#ec4899')" class="w-7 h-7 rounded-full bg-pink-500"></button>
+            <button type="button" onclick="selectTokenColor('#06b6d4')" class="w-7 h-7 rounded-full bg-cyan-500"></button>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs text-slate-400 block mb-1">Или загрузите картинку-аватарку</label>
+          <input id="new-token-img" type="file" accept="image/*" class="text-xs text-slate-400 w-full">
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button onclick="closeTokenModal()" class="px-3 py-1.5 rounded-xl text-xs text-slate-400 hover:bg-slate-800">Отмена</button>
+        <button onclick="createTokenConfirmed()" class="px-4 py-1.5 rounded-xl text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500">Создать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= МОДАЛКА ЗАГРУЗКИ КАРТЫ (ДЛЯ ДМ) ================= -->
+  <div id="map-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-30 p-4">
+    <div class="glass p-5 rounded-2xl w-full max-w-md shadow-2xl">
+      <h3 class="text-sm font-semibold text-white mb-3">🗺️ Настройка боевой карты</h3>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs text-slate-400 block mb-1">Быстрые пресеты фона:</label>
+          <div class="grid grid-cols-3 gap-2">
+            <button onclick="setPresetMap('dungeon')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-center">🧱 Подземелье</button>
+            <button onclick="setPresetMap('grass')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-center">🌲 Лесная поляна</button>
+            <button onclick="setPresetMap('parchment')" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-center">📜 Пергамент</button>
+          </div>
+        </div>
+        <div>
+          <label class="text-xs text-slate-400 block mb-1">Ссылка на картинку карты (URL):</label>
+          <input id="map-url-input" type="url" placeholder="https://..." 
+            class="w-full bg-slate-900 text-xs text-white px-3 py-2 rounded-xl border border-slate-700">
+        </div>
+        <div>
+          <label class="text-xs text-slate-400 block mb-1">Или загрузить файл карты с ПК (авто-сжатие для сети):</label>
+          <input id="map-file-input" type="file" accept="image/*" onchange="uploadMapFile(this)" class="text-xs text-slate-400 w-full">
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button onclick="closeMapModal()" class="px-3 py-1.5 rounded-xl text-xs text-slate-400 hover:bg-slate-800">Закрыть</button>
+        <button onclick="applyMapUrl()" class="px-4 py-1.5 rounded-xl text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-500">Применить URL</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ============================================================================
+   1. АВТОМАТИЧЕСКАЯ БАЗА ДАННЫХ И REALTIME-СИНХРОНИЗАЦИЯ (БЕЗ ССЫЛОК И НАСТРОЕК)
+   ============================================================================ */
+// Уникальный ключ вашей кампании генерируется автоматически из адреса сайта
+const AUTO_ROOM_KEY = 'dnd_vtt_auto_' + (location.hostname + location.pathname).replace(/[^a-zA-Z0-9]/g, '_');
+const CLIENT_ID = 'u_' + Math.random().toString(36).slice(2, 9);
+
+// Единое состояние приложения
+let state = {
+  notes: [],
+  tasks: [],
+  tokens: [
+    { id: 't1', name: 'Воин', x: 4, y: 4, size: 1, color: '#4f46e5', hp: '32/32', img: null },
+    { id: 't2', name: 'Маг', x: 5, y: 5, size: 1, color: '#06b6d4', hp: '18/18', img: null },
+    { id: 't3', name: 'Босс Огр', x: 9, y: 5, size: 2, color: '#ef4444', hp: '59/59', img: null }
+  ],
+  fog: {},          // { "x_y": true } — координаты скрытых туманом клеток
+  drawings: [],     // Линии маркера
+  mapPreset: 'dungeon',
+  mapDataUrl: ''
+};
+
+// Загружаем локальный кэш мгновенно при старте
+try {
+  const saved = localStorage.getItem(AUTO_ROOM_KEY);
+  if (saved) state = { ...state, ...JSON.parse(saved) };
+} catch (e) {}
+
+// Имя игрока
+const playerNameInput = document.getElementById('player-name');
+playerNameInput.value = localStorage.getItem('dnd_player_name') || ('Игрок ' + Math.floor(Math.random()*90+10));
+playerNameInput.addEventListener('input', () => localStorage.setItem('dnd_player_name', playerNameInput.value));
+
+// Подключаем GunDB (распределенная база для сохранения между сессиями)
+const gun = Gun(['https://gun-manhattan.herokuapp.com/gun', 'https://peer.wallie.io/gun']);
+const gunRoom = gun.get(AUTO_ROOM_KEY);
+
+gunRoom.get('sharedState').on((data) => {
+  if (!data || !data.payload || data.sender === CLIENT_ID) return;
+  try {
+    const incoming = JSON.parse(data.payload);
+    mergeIncomingState(incoming);
+  } catch (e) {}
+});
+
+// Подключаем быстрый WebSocket брокер (MQTT over WSS) для мгновенного передвижения токенов
+let mqttClient = null;
+const MQTT_TOPIC = 'owlbear_vtt_sync/' + AUTO_ROOM_KEY;
+
+function initRealtimeNetwork() {
+  const dot = document.getElementById('sync-dot');
+  const txt = document.getElementById('sync-text');
+
+  mqttClient = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+    clientId: CLIENT_ID,
+    clean: true,
+    reconnectPeriod: 3000
+  });
+
+  mqttClient.on('connect', () => {
+    dot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+    txt.textContent = 'Онлайн (Общая база)';
+    mqttClient.subscribe(MQTT_TOPIC);
+    // Запрашиваем актуальное состояние у тех, кто уже на сайте
+    mqttClient.publish(MQTT_TOPIC, JSON.stringify({ type: 'REQ_SYNC', sender: CLIENT_ID }));
+  });
+
+  mqttClient.on('message', (topic, message) => {
+    try {
+      const packet = JSON.parse(message.toString());
+      if (packet.sender === CLIENT_ID) return;
+
+      if (packet.type === 'REQ_SYNC') {
+        // Отправляем новичку текущее состояние
+        broadcastState('FULL_STATE');
+      } else if (packet.type === 'FULL_STATE' || packet.type === 'UPDATE') {
+        mergeIncomingState(packet.state);
+      } else if (packet.type === 'DICE') {
+        showDiceToast(packet.text);
+      }
+    } catch (e) {}
+  });
+
+  mqttClient.on('offline', () => {
+    dot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400';
+    txt.textContent = 'Локальный режим';
+  });
+}
+
+function broadcastState(type = 'UPDATE') {
+  try {
+    localStorage.setItem(AUTO_ROOM_KEY, JSON.stringify(state));
+  } catch (e) {}
+
+  const payloadStr = JSON.stringify(state);
+
+  // Отправка по быстрому WebSocket
+  if (mqttClient && mqttClient.connected) {
+    mqttClient.publish(MQTT_TOPIC, JSON.stringify({
+      type,
+      sender: CLIENT_ID,
+      state
+    }));
+  }
+
+  // Сохранение в облачном графе GunDB
+  gunRoom.get('sharedState').put({
+    sender: CLIENT_ID,
+    payload: payloadStr,
+    updatedAt: Date.now()
+  });
+}
+
+function mergeIncomingState(incoming) {
+  if (!incoming) return;
+  state = { ...state, ...incoming };
+  try { localStorage.setItem(AUTO_ROOM_KEY, JSON.stringify(state)); } catch (e) {}
+  if (state.mapDataUrl) loadMapImage(state.mapDataUrl);
+  renderNotes();
+  renderTasks();
+  updateInspectorUI();
+}
+
+/* ============================================================================
+   2. ДВИЖОК ПОЛЯ OWLBEAR RODEO (CANVAS, КАМЕРА, СЕТКА, ТОКЕНЫ, ТУМАН, ЛИНЕЙКА)
+   ============================================================================ */
+const canvas = document.getElementById('vtt-canvas');
+const ctx = canvas.getContext('2d');
+
+const GRID_SIZE = 56; // 1 клетка = 56px = 5 футов
+let cam = { x: 120, y: 80, zoom: 1 };
+let currentTool = 'move'; // 'move' | 'measure' | 'draw' | 'fog'
+let isDM = false;
+
+let draggingToken = null;
+let selectedTokenId = null;
+let isPanning = false;
+let panStart = { x: 0, y: 0 };
+let measureLine = null;
+let currentDrawing = null;
+let fogPaintingMode = null; // true = ставить туман, false = стирать туман
+
+let bgImage = new Image();
+let bgImageLoaded = false;
+let tokenImageCache = {};
+
+function loadMapImage(url) {
+  if (!url) { bgImageLoaded = false; return; }
+  if (bgImage.src === url && bgImageLoaded) return;
+  bgImage = new Image();
+  bgImage.crossOrigin = 'anonymous';
+  bgImage.onload = () => { bgImageLoaded = true; };
+  bgImage.src = url;
+}
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+function screenToWorld(sx, sy) {
+  return {
+    x: (sx - cam.x) / cam.zoom,
+    y: (sy - cam.y) / cam.zoom
+  };
+}
+
+function centerCamera() {
+  cam = { x: 120, y: 80, zoom: 1 };
+}
+
+function setTool(tool) {
+  currentTool = tool;
+  document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+  const activeBtn = document.getElementById('tool-' + tool);
+  if (activeBtn) activeBtn.classList.add('active');
+}
+
+function toggleDM() {
+  isDM = !isDM;
+  const btn = document.getElementById('dm-toggle');
+  const dmTools = document.getElementById('dm-tools');
+  if (isDM) {
+    btn.textContent = '👑 Режим ДМ: ВКЛ';
+    btn.className = 'text-xs px-2.5 py-1 rounded-lg border border-amber-500/50 bg-amber-500/20 text-amber-300 font-semibold transition';
+    dmTools.classList.remove('hidden');
+    dmTools.classList.add('flex');
+  } else {
+    btn.textContent = '👑 Режим ДМ: ВЫКЛ';
+    btn.className = 'text-xs px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-800/60 text-slate-400 hover:text-white transition';
+    dmTools.classList.add('hidden');
+    dmTools.classList.remove('flex');
+    if (currentTool === 'fog') setTool('move');
+  }
+}
+
+// Обработка мыши и тач-экрана на Canvas
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 1 || e.button === 2 || e.spaceKey) {
+    isPanning = true;
+    panStart = { x: e.clientX - cam.x, y: e.clientY - cam.y };
+    return;
+  }
+
+  const world = screenToWorld(e.clientX, e.clientY);
+  const gx = Math.floor(world.x / GRID_SIZE);
+  const gy = Math.floor(world.y / GRID_SIZE);
+
+  if (currentTool === 'move') {
+    // Проверяем, кликнули ли по токену
+    const hit = findTokenAt(world.x, world.y);
+    if (hit) {
+      draggingToken = hit;
+      selectedTokenId = hit.id;
+      updateInspectorUI();
+    } else {
+      selectedTokenId = null;
+      closeInspector();
+      isPanning = true;
+      panStart = { x: e.clientX - cam.x, y: e.clientY - cam.y };
+    }
+  } else if (currentTool === 'measure') {
+    measureLine = { x1: world.x, y1: world.y, x2: world.x, y2: world.y };
+  } else if (currentTool === 'draw') {
+    currentDrawing = { color: '#f43f5e', points: [{ x: world.x, y: world.y }] };
+    state.drawings.push(currentDrawing);
+  } else if (currentTool === 'fog' && isDM) {
+    const key = `${gx}_${gy}`;
+    fogPaintingMode = !state.fog[key];
+    if (fogPaintingMode) state.fog[key] = true;
+    else delete state.fog[key];
+    broadcastState();
+  }
+});
+
+window.addEventListener('mousemove', (e) => {
+  const world = screenToWorld(e.clientX, e.clientY);
+
+  if (isPanning) {
+    cam.x = e.clientX - panStart.x;
+    cam.y = e.clientY - panStart.y;
+    return;
+  }
+
+  if (draggingToken && currentTool === 'move') {
+    // Плавное перетаскивание с привязкой к сетке при отпускании
+    draggingToken._dragX = world.x - (draggingToken.size * GRID_SIZE) / 2;
+    draggingToken._dragY = world.y - (draggingToken.size * GRID_SIZE) / 2;
+  } else if (measureLine && currentTool === 'measure') {
+    measureLine.x2 = world.x;
+    measureLine.y2 = world.y;
+  } else if (currentDrawing && currentTool === 'draw') {
+    currentDrawing.points.push({ x: world.x, y: world.y });
+  } else if (fogPaintingMode !== null && currentTool === 'fog' && isDM) {
+    const gx = Math.floor(world.x / GRID_SIZE);
+    const gy = Math.floor(world.y / GRID_SIZE);
+    const key = `${gx}_${gy}`;
+    if (fogPaintingMode) state.fog[key] = true;
+    else delete state.fog[key];
+  }
+});
+
+window.addEventListener('mouseup', () => {
+  if (draggingToken) {
+    if (draggingToken._dragX !== undefined) {
+      // Привязка к клеткам сетки (Grid Snapping как в Owlbear Rodeo)
+      draggingToken.x = Math.round(draggingToken._dragX / GRID_SIZE);
+      draggingToken.y = Math.round(draggingToken._dragY / GRID_SIZE);
+      delete draggingToken._dragX;
+      delete draggingToken._dragY;
+      broadcastState();
+    }
+    draggingToken = null;
+  }
+  if (currentDrawing) {
+    currentDrawing = null;
+    broadcastState();
+  }
+  if (fogPaintingMode !== null) {
+    fogPaintingMode = null;
+    broadcastState();
+  }
+  isPanning = false;
+  measureLine = null;
+});
+
+// Зум колёсиком мыши относительно курсора
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const zoomFactor = e.deltaY < 0 ? 1.12 : 0.89;
+  const newZoom = Math.min(Math.max(cam.zoom * zoomFactor, 0.35), 3.0);
+
+  const wx = (e.clientX - cam.x) / cam.zoom;
+  const wy = (e.clientY - cam.y) / cam.zoom;
+
+  cam.zoom = newZoom;
+  cam.x = e.clientX - wx * cam.zoom;
+  cam.y = e.clientY - wy * cam.zoom;
+}, { passive: false });
+
+function findTokenAt(wx, wy) {
+  for (let i = state.tokens.length - 1; i >= 0; i--) {
+    const t = state.tokens[i];
+    const tx = t.x * GRID_SIZE;
+    const ty = t.y * GRID_SIZE;
+    const sizePx = (t.size || 1) * GRID_SIZE;
+    if (wx >= tx && wx <= tx + sizePx && wy >= ty && wy <= ty + sizePx) {
+      return t;
+    }
+  }
+  return null;
+}
+
+// Основной цикл рендеринга (60 FPS)
+function renderLoop() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  ctx.translate(cam.x, cam.y);
+  ctx.scale(cam.zoom, cam.zoom);
+
+  // 1. Отрисовка подложки боевых клеток (24x16 клеток по умолчанию)
+  const COLS = 26, ROWS = 18;
+  const boardW = COLS * GRID_SIZE;
+  const boardH = ROWS * GRID_SIZE;
+
+  // Фон карты (Пресет или загруженная картинка)
+  if (bgImageLoaded && state.mapDataUrl) {
+    ctx.drawImage(bgImage, 0, 0, boardW, boardH);
+  } else {
+    if (state.mapPreset === 'grass') ctx.fillStyle = '#14261c';
+    else if (state.mapPreset === 'parchment') ctx.fillStyle = '#2b251d';
+    else ctx.fillStyle = '#161922';
+    ctx.fillRect(0, 0, boardW, boardH);
+  }
+
+  // 2. Сетка (Grid)
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.09)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x <= COLS; x++) {
+    ctx.moveTo(x * GRID_SIZE, 0);
+    ctx.lineTo(x * GRID_SIZE, boardH);
+  }
+  for (let y = 0; y <= ROWS; y++) {
+    ctx.moveTo(0, y * GRID_SIZE);
+    ctx.lineTo(boardW, y * GRID_SIZE);
+  }
+  ctx.stroke();
+
+  // 3. Рисунки маркером
+  for (const d of state.drawings) {
+    if (!d.points || d.points.length < 2) continue;
+    ctx.strokeStyle = d.color || '#f43f5e';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(d.points[0].x, d.points[0].y);
+    for (let i = 1; i < d.points.length; i++) ctx.lineTo(d.points[i].x, d.points[i].y);
+    ctx.stroke();
+  }
+
+  // 4. Токены персонажей и монстров
+  for (const t of state.tokens) {
+    const gx = Math.round((t._dragX !== undefined ? t._dragX : t.x * GRID_SIZE) / GRID_SIZE);
+    const gy = Math.round((t._dragY !== undefined ? t._dragY : t.y * GRID_SIZE) / GRID_SIZE);
+
+    // Если токен в тумане войны и мы НЕ ДМ — скрываем его от игроков
+    if (!isDM && state.fog[`${gx}_${gy}`]) continue;
+
+    const px = t._dragX !== undefined ? t._dragX : t.x * GRID_SIZE;
+    const py = t._dragY !== undefined ? t._dragY : t.y * GRID_SIZE;
+    const sz = (t.size || 1) * GRID_SIZE;
+    const cx = px + sz / 2;
+    const cy = py + sz / 2;
+    const radius = sz / 2 - 4;
+
+    // Подсветка выбранного токена
+    if (t.id === selectedTokenId) {
+      ctx.save();
+      ctx.strokeStyle = '#818cf8';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius + 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Кружок токена
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+
+    if (t.img) {
+      if (!tokenImageCache[t.img]) {
+        const im = new Image();
+        im.src = t.img;
+        tokenImageCache[t.img] = im;
+      }
+      const im = tokenImageCache[t.img];
+      if (im.complete) ctx.drawImage(im, px + 4, py + 4, sz - 8, sz - 8);
+    } else {
+      ctx.fillStyle = t.color || '#4f46e5';
+      ctx.fillRect(px, py, sz, sz);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `bold ${Math.round(14 * (t.size || 1))}px Inter`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText((t.name || '?').slice(0, 2).toUpperCase(), cx, cy);
+    }
+    ctx.restore();
+
+    // Ободок токена
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Плашка с именем и ХП
+    ctx.font = '600 11px Inter';
+    ctx.textAlign = 'center';
+    const label = t.hp ? `${t.name} (${t.hp})` : t.name;
+    const textW = ctx.measureText(label).width + 10;
+    ctx.fillStyle = 'rgba(15, 17, 23, 0.85)';
+    ctx.fillRect(cx - textW / 2, py + sz - 4, textW, 18);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText(label, cx, py + sz + 8);
+  }
+
+  // 5. Туман войны (Fog of War)
+  for (const key in state.fog) {
+    if (!state.fog[key]) continue;
+    const [fx, fy] = key.split('_').map(Number);
+    // У ДМа туман полупрозрачный, у игроков — полностью непроглядный
+    ctx.fillStyle = isDM ? 'rgba(9, 10, 15, 0.62)' : '#07080c';
+    ctx.fillRect(fx * GRID_SIZE, fy * GRID_SIZE, GRID_SIZE + 0.5, GRID_SIZE + 0.5);
+  }
+
+  // 6. Линейка расстояний (5 футов на клетку)
+  if (measureLine) {
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(measureLine.x1, measureLine.y1);
+    ctx.lineTo(measureLine.x2, measureLine.y2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const dx = (measureLine.x2 - measureLine.x1) / GRID_SIZE;
+    const dy = (measureLine.y2 - measureLine.y1) / GRID_SIZE;
+    // Подсчет по правилам D&D 5e (максимум по осям * 5 футов)
+    const cells = Math.round(Math.hypot(dx, dy));
+    const feet = cells * 5;
+
+    ctx.fillStyle = '#0284c7';
+    ctx.fillRect(measureLine.x2 + 8, measureLine.y2 - 14, 70, 22);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 12px Inter';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${feet} фт.`, measureLine.x2 + 43, measureLine.y2 + 1);
+  }
+
+  ctx.restore();
+  requestAnimationFrame(renderLoop);
+}
+
+/* ============================================================================
+   3. УПРАВЛЕНИЕ ТОКЕНАМИ, ТУМАНОМ И КАРТОЙ
+   ============================================================================ */
+let newTokenColor = '#4f46e5';
+
+function selectTokenColor(c) {
+  newTokenColor = c;
+}
+
+function openTokenModal() {
+  document.getElementById('token-modal').classList.remove('hidden');
+}
+function closeTokenModal() {
+  document.getElementById('token-modal').classList.add('hidden');
+}
+
+function createTokenConfirmed() {
+  const name = document.getElementById('new-token-name').value.trim() || 'Герой';
+  const hp = document.getElementById('new-token-hp').value.trim();
+  const size = Number(document.getElementById('new-token-size').value) || 1;
+  const fileInput = document.getElementById('new-token-img');
+
+  const finishCreate = (imgData) => {
+    state.tokens.push({
+      id: 'tok_' + Date.now(),
+      name,
+      hp,
+      size,
+      color: newTokenColor,
+      img: imgData || null,
+      x: 6 + Math.floor(Math.random() * 4),
+      y: 5 + Math.floor(Math.random() * 4)
+    });
+    broadcastState();
+    closeTokenModal();
+    document.getElementById('new-token-name').value = '';
+    document.getElementById('new-token-hp').value = '';
+    fileInput.value = '';
+  };
+
+  if (fileInput.files && fileInput.files[0]) {
+    compressImageFile(fileInput.files[0], 160, finishCreate);
+  } else {
+    finishCreate(null);
+  }
+}
+
+function updateInspectorUI() {
+  const insp = document.getElementById('token-inspector');
+  const tok = state.tokens.find(t => t.id === selectedTokenId);
+  if (!tok) { insp.classList.add('hidden'); return; }
+  insp.classList.remove('hidden');
+  document.getElementById('insp-name').textContent = tok.name;
+  document.getElementById('insp-hp').value = tok.hp || '';
+  document.getElementById('insp-size').value = tok.size || 1;
+}
+
+function closeInspector() {
+  selectedTokenId = null;
+  document.getElementById('token-inspector').classList.add('hidden');
+}
+
+function updateSelectedToken(field, value) {
+  const tok = state.tokens.find(t => t.id === selectedTokenId);
+  if (!tok) return;
+  tok[field] = value;
+  broadcastState();
+}
+
+function deleteSelectedToken() {
+  state.tokens = state.tokens.filter(t => t.id !== selectedTokenId);
+  closeInspector();
+  broadcastState();
+}
+
+function clearDrawings() {
+  state.drawings = [];
+  broadcastState();
+}
+
+function fillAllFog() {
+  for (let x = 0; x < 26; x++) {
+    for (let y = 0; y < 18; y++) state.fog[`${x}_${y}`] = true;
+  }
+  broadcastState();
+}
+
+function clearAllFog() {
+  state.fog = {};
+  broadcastState();
+}
+
+function openMapModal() { document.getElementById('map-modal').classList.remove('hidden'); }
+function closeMapModal() { document.getElementById('map-modal').classList.add('hidden'); }
+
+function setPresetMap(preset) {
+  state.mapPreset = preset;
+  state.mapDataUrl = '';
+  bgImageLoaded = false;
+  broadcastState();
+  closeMapModal();
+}
+
+function applyMapUrl() {
+  const url = document.getElementById('map-url-input').value.trim();
+  if (url) {
+    state.mapDataUrl = url;
+    loadMapImage(url);
+    broadcastState();
+  }
+  closeMapModal();
+}
+
+function uploadMapFile(input) {
+  if (!input.files || !input.files[0]) return;
+  compressImageFile(input.files[0], 1100, (dataUrl) => {
+    state.mapDataUrl = dataUrl;
+    loadMapImage(dataUrl);
+    broadcastState();
+    closeMapModal();
+  });
+}
+
+// Сжатие изображений через Canvas, чтобы они легко передавались всем игрокам
+function compressImageFile(file, maxDim, callback) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      callback(c.toDataURL('image/jpeg', 0.72));
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+/* ============================================================================
+   4. ОБЩИЕ ЗАМЕТКИ, ЗАДАЧИ И КУБИКИ
+   ============================================================================ */
+function toggleSidebar(tab) {
+  const sb = document.getElementById('sidebar');
+  sb.classList.remove('translate-x-[120%]');
+  const notesPanel = document.getElementById('panel-notes');
+  const tasksPanel = document.getElementById('panel-tasks');
+  const btnNotes = document.getElementById('btn-tab-notes');
+  const btnTasks = document.getElementById('btn-tab-tasks');
+
+  if (tab === 'notes') {
+    document.getElementById('sidebar-title').textContent = '📓 Общие заметки партии';
+    notesPanel.classList.remove('hidden');
+    tasksPanel.classList.add('hidden');
+    btnNotes.className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white transition flex items-center gap-1.5';
+    btnTasks.className = 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition flex items-center gap-1.5';
+  } else {
+    document.getElementById('sidebar-title').textContent = '✅ Общие задачи и квесты';
+    notesPanel.classList.add('hidden');
+    tasksPanel.classList.remove('hidden');
+    btnTasks.className = 'px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white transition flex items-center gap-1.5';
+    btnNotes.className = 'px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:bg-slate-800 transition flex items-center gap-1.5';
+  }
+}
+
+function closeSidebar() {
+  document.getElementById('sidebar').classList.add('translate-x-[120%]');
+}
+
+function addNote() {
+  const titleEl = document.getElementById('note-title');
+  const bodyEl = document.getElementById('note-body');
+  const title = titleEl.value.trim();
+  const body = bodyEl.value.trim();
+  if (!title && !body) return;
+
+  state.notes.unshift({
+    id: 'n_' + Date.now(),
+    title: title || 'Без названия',
+    body,
+    author: playerNameInput.value || 'Игрок',
+    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  });
+
+  titleEl.value = '';
+  bodyEl.value = '';
+  renderNotes();
+  broadcastState();
+}
+
+function deleteNote(id) {
+  state.notes = state.notes.filter(n => n.id !== id);
+  renderNotes();
+  broadcastState();
+}
+
+function renderNotes() {
+  const list = document.getElementById('notes-list');
+  document.getElementById('notes-count').textContent = state.notes.length;
+  if (!state.notes.length) {
+    list.innerHTML = `<div class="text-xs text-slate-500 text-center py-8">Пока нет заметок. Добавьте первую!</div>`;
+    return;
+  }
+  list.innerHTML = state.notes.map(n => `
+    <div class="p-3 rounded-xl bg-slate-900/75 border border-slate-800/90 group">
+      <div class="flex items-start justify-between gap-2">
+        <h4 class="text-xs font-semibold text-white">${escapeHtml(n.title)}</h4>
+        <button onclick="deleteNote('${n.id}')" class="opacity-0 group-hover:opacity-100 text-[11px] text-slate-500 hover:text-rose-400">✕</button>
+      </div>
+      <p class="text-xs text-slate-300 mt-1 whitespace-pre-wrap leading-relaxed">${escapeHtml(n.body)}</p>
+      <div class="text-[10px] text-slate-500 mt-2 flex justify-between">
+        <span>✍️ ${escapeHtml(n.author)}</span>
+        <span>${n.time || ''}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function addTask() {
+  const input = document.getElementById('task-input');
+  const text = input.value.trim();
+  if (!text) return;
+  state.tasks.unshift({
+    id: 'tsk_' + Date.now(),
+    text,
+    done: false,
+    author: playerNameInput.value || 'Игрок'
+  });
+  input.value = '';
+  renderTasks();
+  broadcastState();
+}
+
+function toggleTask(id) {
+  const t = state.tasks.find(x => x.id === id);
+  if (t) t.done = !t.done;
+  renderTasks();
+  broadcastState();
+}
+
+function deleteTask(id) {
+  state.tasks = state.tasks.filter(x => x.id !== id);
+  renderTasks();
+  broadcastState();
+}
+
+function renderTasks() {
+  const list = document.getElementById('tasks-list');
+  document.getElementById('tasks-count').textContent = state.tasks.filter(t => !t.done).length;
+  if (!state.tasks.length) {
+    list.innerHTML = `<div class="text-xs text-slate-500 text-center py-8">Список задач пуст</div>`;
+    return;
+  }
+  list.innerHTML = state.tasks.map(t => `
+    <div class="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-900/75 border border-slate-800/90 group">
+      <label class="flex items-center gap-2.5 flex-1 cursor-pointer">
+        <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTask('${t.id}')" 
+          class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+        <span class="text-xs ${t.done ? 'line-through text-slate-500' : 'text-slate-200'}">${escapeHtml(t.text)}</span>
+      </label>
+      <button onclick="deleteTask('${t.id}')" class="opacity-0 group-hover:opacity-100 text-xs text-slate-500 hover:text-rose-400">✕</button>
+    </div>
+  `).join('');
+}
+
+function rollDice(sides) {
+  const val = Math.floor(Math.random() * sides) + 1;
+  const who = playerNameInput.value || 'Игрок';
+  const msg = `🎲 ${who} бросил d${sides}: выпало ${val}!`;
+  showDiceToast(msg);
+  if (mqttClient && mqttClient.connected) {
+    mqttClient.publish(MQTT_TOPIC, JSON.stringify({ type: 'DICE', sender: CLIENT_ID, text: msg }));
+  }
+}
+
+let diceTimer = null;
+function showDiceToast(text) {
+  const el = document.getElementById('dice-toast');
+  el.textContent = text;
+  el.classList.remove('hidden');
+  clearTimeout(diceTimer);
+  diceTimer = setTimeout(() => el.classList.add('hidden'), 4500);
+}
+
+function escapeHtml(str) {
+  return String(str || '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+}
+
+// Старт всего приложения
+if (state.mapDataUrl) loadMapImage(state.mapDataUrl);
+renderNotes();
+renderTasks();
+initRealtimeNetwork();
+requestAnimationFrame(renderLoop);
+</script>
 </body>
 </html>

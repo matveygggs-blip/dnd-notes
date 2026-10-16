@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Дневник Кампании</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Gun.js для мгновенной синхронизации между игроками без регистрации -->
+    <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        serif: ['Newsreader', 'Georgia', 'serif']
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        ::-webkit-scrollbar {
+            width: 5px;
+            height: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(156, 163, 175, 0.25);
+            border-radius: 3px;
+        }
+        textarea {
+            resize: vertical;
+        }
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .animate-pulse-slow {
+            animation: pulse-dot 2.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+    </style>
+</head>
+<body class="bg-[#fbfaf8] text-stone-800 dark:bg-[#141413] dark:text-neutral-200 min-h-screen transition-colors duration-200 selection:bg-stone-200 dark:selection:bg-neutral-800">
+
+    <!-- Основной контейнер -->
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
+
+        <!-- Верхняя шапка в духе Notion / Obsidian -->
+        <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-stone-200/80 dark:border-neutral-800/80">
+            
+            <!-- Левая часть: Название и Статус -->
+            <div class="space-y-1">
+                <div class="flex items-center gap-2.5 flex-wrap">
+                    <h1 class="text-lg sm:text-xl font-semibold tracking-tight text-stone-900 dark:text-neutral-100">
+                        Дневник кампании
+                    </h1>
+                    <span class="text-stone-300 dark:text-neutral-700">/</span>
+                    <!-- Код комнаты -->
+                    <div class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-stone-200/60 dark:bg-neutral-800/70 text-xs font-mono text-stone-600 dark:text-neutral-300">
+                        <span class="opacity-60">#</span>
+                        <input id="roomInput" type="text" onchange="changeRoom(this.value)" class="bg-transparent focus:outline-none w-28 sm:w-32 font-medium" title="Код комнаты кампании (одинаковый для всех игроков)" placeholder="комната">
+                    </div>
+                    <button onclick="copyInviteLink()" class="text-xs text-stone-400 hover:text-stone-700 dark:hover:text-neutral-200 transition px-1.5 py-0.5 rounded hover:bg-stone-200/50 dark:hover:bg-neutral-800" title="Скопировать прямую ссылку со входом в эту комнату и базу">
+                        Копировать ссылку ↗
+                    </button>
+                </div>
+
+                <!-- Индикатор синхронизации -->
+                <div class="flex items-center gap-2 text-xs text-stone-500 dark:text-neutral-400">
+                    <span id="statusDot" class="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse-slow"></span>
+                    <span id="statusText">Онлайн • Реальное время</span>
+                </div>
+            </div>
+
+            <!-- Правая часть: Имя игрока, База, Тема -->
+            <div class="flex flex-wrap items-center gap-2">
+                <!-- Имя игрока -->
+                <div class="flex items-center bg-white dark:bg-neutral-900 border border-stone-200 dark:border-neutral-800 rounded-lg px-2.5 py-1.5 shadow-2xs">
+                    <span class="text-[11px] text-stone-400 dark:text-neutral-500 mr-2 select-none">Игрок:</span>
+                    <input type="text" id="playerNameInput" oninput="savePlayerName(this.value)" placeholder="Ваше имя..." class="text-xs font-medium bg-transparent focus:outline-none w-28 sm:w-32 text-stone-800 dark:text-neutral-200">
+                </div>
+
+                <!-- Кнопка настройки БД -->
+                <button onclick="toggleDbModal()" id="dbConfigBtn" class="px-3 py-1.5 rounded-lg text-xs font-medium border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:bg-stone-100 dark:hover:bg-neutral-800 transition flex items-center gap-1.5">
+                    <span id="dbModeBadge" class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                    <span>База (Firebase)</span>
+                </button>
+
+                <!-- Тема -->
+                <button onclick="toggleTheme()" class="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:bg-stone-100 dark:hover:bg-neutral-800 transition" title="Светлая / Тёмная тема">
+                    ◐
+                </button>
+            </div>
+        </header>
+
+        <!-- Модальная панель настройки Firebase Realtime Database (скрыта по умолчанию) -->
+        <section id="dbModal" class="hidden my-5 p-5 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm space-y-4 text-xs">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h2 class="text-sm font-semibold text-stone-900 dark:text-neutral-100">Настройка общей базы данных в реальном времени</h2>
+                    <p class="text-stone-500 dark:text-neutral-400 mt-0.5">
+                        По умолчанию уже работает мгновенная P2P-синхронизация (Gun.js) по коду комнаты. Для 100% вечного хранения подключите бесплатную Google Firebase Realtime Database:
+                    </p>
+                </div>
+                <button onclick="toggleDbModal()" class="text-stone-400 hover:text-stone-700 dark:hover:text-neutral-200 text-sm px-1">✕</button>
+            </div>
+
+            <!-- Инструкция в 3 шага -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+                <div class="p-3 rounded-lg bg-stone-50 dark:bg-neutral-950 border border-stone-200/60 dark:border-neutral-800/80 space-y-1">
+                    <div class="font-semibold text-stone-800 dark:text-neutral-200">Шаг 1. Создайте проект</div>
+                    <p class="text-stone-500 dark:text-neutral-400 leading-relaxed">
+                        Зайдите на <a href="https://console.firebase.google.com/" target="_blank" rel="noopener" class="underline hover:text-stone-800 dark:hover:text-neutral-200">console.firebase.google.com</a>, нажмите <b>Create a project</b> (бесплатно, без привязки карт).
+                    </p>
+                </div>
+                <div class="p-3 rounded-lg bg-stone-50 dark:bg-neutral-950 border border-stone-200/60 dark:border-neutral-800/80 space-y-1">
+                    <div class="font-semibold text-stone-800 dark:text-neutral-200">Шаг 2. Включите Realtime DB</div>
+                    <p class="text-stone-500 dark:text-neutral-400 leading-relaxed">
+                        В меню слева выберите <b>Build → Realtime Database → Create Database</b>. Выберите режим <b>Start in test mode</b> (открытый доступ).
+                    </p>
+                </div>
+                <div class="p-3 rounded-lg bg-stone-50 dark:bg-neutral-950 border border-stone-200/60 dark:border-neutral-800/80 space-y-1">
+                    <div class="font-semibold text-stone-800 dark:text-neutral-200">Шаг 3. Вставьте ссылку</div>
+                    <p class="text-stone-500 dark:text-neutral-400 leading-relaxed">
+                        Скопируйте URL вашей базы (вида <code class="text-[11px]">https://...firebaseio.com</code> или <code class="text-[11px]">...firebasedatabase.app</code>) в поле ниже или в константу <code class="text-[11px]">DEFAULT_FIREBASE_URL</code> в коде.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Поле ввода URL базы -->
+            <div class="flex flex-col sm:flex-row gap-2 pt-1">
+                <input type="url" id="firebaseUrlInput" placeholder="https://your-project-default-rtdb.firebaseio.com" class="flex-1 px-3 py-2 rounded-lg bg-stone-50 dark:bg-neutral-950 border border-stone-200 dark:border-neutral-800 focus:outline-none focus:border-stone-400 dark:focus:border-neutral-600 font-mono text-xs">
+                <button onclick="saveFirebaseUrl()" class="px-4 py-2 rounded-lg bg-stone-900 text-white dark:bg-neutral-100 dark:text-neutral-900 font-medium hover:opacity-90 transition">
+                    Подключить базу
+                </button>
+                <button onclick="clearFirebaseUrl()" class="px-3 py-2 rounded-lg border border-stone-200 dark:border-neutral-800 text-stone-500 hover:text-stone-800 dark:hover:text-neutral-200 transition">
+                    Сбросить на P2P
+                </button>
+            </div>
+        </section>
+
+        <!-- Мобильный переключатель вкладок (виден только на экранах < lg) -->
+        <div class="flex lg:hidden items-center justify-between mt-5 mb-4">
+            <div class="inline-flex p-1 rounded-xl bg-stone-200/70 dark:bg-neutral-900 border border-stone-200/60 dark:border-neutral-800 w-full">
+                <button onclick="switchMobileTab('notes')" id="mob-tab-notes" class="flex-1 py-1.5 rounded-lg text-xs font-medium transition bg-white dark:bg-neutral-800 shadow-2xs text-stone-900 dark:text-white">
+                    Заметки (<span id="mobNotesCount">0</span>)
+                </button>
+                <button onclick="switchMobileTab('tasks')" id="mob-tab-tasks" class="flex-1 py-1.5 rounded-lg text-xs font-medium transition text-stone-500 dark:text-neutral-400">
+                    Задачи (<span id="mobTasksCount">0</span>)
+                </button>
+            </div>
+        </div>
+
+        <!-- Двухколоночная сетка на широком экране (Notion-style) -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 mt-6 items-start">
+
+            <!-- ==================== ЛЕВАЯ КОЛОНКА: ЗАМЕТКИ (7 колонок) ==================== -->
+            <main id="col-notes" class="lg:col-span-7 space-y-5">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500">Заметки партии</h2>
+                        <span id="notesCountBadge" class="text-xs text-stone-400 dark:text-neutral-600 font-mono">0</span>
+                    </div>
+                    <!-- Поиск -->
+                    <input type="text" id="searchInput" oninput="renderNotes()" placeholder="Поиск по заметкам..." class="w-44 sm:w-52 px-2.5 py-1 rounded-md text-xs bg-transparent border border-stone-200 dark:border-neutral-800 focus:outline-none focus:border-stone-400 dark:focus:border-neutral-600">
+                </div>
+
+                <!-- Форма создания / редактирования заметки -->
+                <form onsubmit="submitNote(event)" class="p-4 rounded-xl bg-white dark:bg-neutral-900/90 border border-stone-200/90 dark:border-neutral-800 shadow-2xs space-y-2.5">
+                    <input type="hidden" id="editingNoteId">
+                    <input type="text" id="noteTitle" required placeholder="Заголовок заметки..." class="w-full px-1 py-1 text-sm font-semibold bg-transparent border-b border-transparent focus:border-stone-200 dark:focus:border-neutral-800 focus:outline-none placeholder:font-normal placeholder:text-stone-400 dark:placeholder:text-neutral-500">
+                    <textarea id="noteText" required rows="3" placeholder="Запишите важные события сессии, имена НПС или улики..." class="w-full px-1 py-1 text-sm bg-transparent focus:outline-none leading-relaxed placeholder:text-stone-400 dark:placeholder:text-neutral-500"></textarea>
+                    
+                    <div class="flex items-center justify-between pt-2 border-t border-stone-100 dark:border-neutral-800/80">
+                        <span id="noteFormStatus" class="text-[11px] text-stone-400 dark:text-neutral-500">Видно всем участникам</span>
+                        <div class="flex items-center gap-2">
+                            <button type="button" id="cancelEditBtn" onclick="resetNoteForm()" class="hidden px-2.5 py-1 rounded-md text-xs text-stone-500 hover:bg-stone-100 dark:hover:bg-neutral-800 transition">
+                                Отмена
+                            </button>
+                            <button type="submit" id="submitNoteBtn" class="px-3.5 py-1.5 rounded-lg text-xs font-medium bg-stone-900 text-white dark:bg-neutral-200 dark:text-neutral-900 hover:opacity-90 transition">
+                                Опубликовать
+                            </button>
+                        </div>
+                    </div>
+                </form>
+
+                <!-- Список заметок -->
+                <div id="notesList" class="space-y-3"></div>
+            </main>
+
+            <!-- ==================== ПРАВАЯ КОЛОНКА: ЗАДАЧИ (5 колонок) ==================== -->
+            <aside id="col-tasks" class="lg:col-span-5 space-y-4 hidden lg:block">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-xs font-semibold uppercase tracking-wider text-stone-400 dark:text-neutral-500">Общие задачи</h2>
+                        <span id="tasksCountBadge" class="text-xs text-stone-400 dark:text-neutral-600 font-mono">0</span>
+                    </div>
+                    <div class="flex items-center gap-2.5 text-[11px] text-stone-400 dark:text-neutral-500">
+                        <button onclick="setTaskFilter('all')" id="filter-all" class="text-stone-800 dark:text-neutral-200 font-medium">Все</button>
+                        <button onclick="setTaskFilter('active')" id="filter-active" class="hover:text-stone-700 dark:hover:text-neutral-300">Активные</button>
+                        <button onclick="setTaskFilter('done')" id="filter-done" class="hover:text-stone-700 dark:hover:text-neutral-300">Готовые</button>
+                    </div>
+                </div>
+
+                <!-- Форма добавления задачи -->
+                <form onsubmit="submitTask(event)" class="flex gap-2">
+                    <input type="text" id="taskInput" required placeholder="Новая задача для отряда..." class="flex-1 px-3 py-2 rounded-xl text-xs sm:text-sm bg-white dark:bg-neutral-900/90 border border-stone-200/90 dark:border-neutral-800 focus:outline-none focus:border-stone-400 dark:focus:border-neutral-600 shadow-2xs">
+                    <button type="submit" class="px-3.5 py-2 rounded-xl text-xs font-medium bg-stone-900 text-white dark:bg-neutral-200 dark:text-neutral-900 hover:opacity-90 transition shrink-0">
+                        Добавить
+                    </button>
+                </form>
+
+                <!-- Список задач -->
+                <div id="tasksList" class="rounded-xl bg-white dark:bg-neutral-900/90 border border-stone-200/90 dark:border-neutral-800 divide-y divide-stone-100 dark:divide-neutral-800/70 shadow-2xs overflow-hidden"></div>
+            </aside>
+
+        </div>
+    </div>
+
+    <!-- Уведомление -->
+    <div id="toast" class="fixed bottom-4 right-4 hidden px-3.5 py-2 rounded-lg bg-stone-900 text-white dark:bg-neutral-100 dark:text-neutral-900 text-xs font-medium shadow-lg z-50">
+        Сохранено
+    </div>
+
+    <script>
+        /**
+         * ============================================================================
+         * НАСТРОЙКА ДЛЯ ДМА ПЕРЕД ЗАГРУЗКОЙ НА GITHUB PAGES (НЕОБЯЗАТЕЛЬНО):
+         * Если вы создали бесплатную базу Firebase, можете вставить её ссылку прямо сюда,
+         * чтобы у всех игроков она открывалась автоматически без настроек:
+         * ============================================================================
+         */
+        const DEFAULT_FIREBASE_URL = ''; // Например: 'https://my-dnd-party-default-rtdb.europe-west1.firebasedatabase.app'
+        const DEFAULT_ROOM_CODE = 'phandalin-party';
+
+        // Ключи локального хранилища браузера
+        const LS_PLAYER_NAME = 'dnd_min_player_name';
+        const LS_THEME = 'dnd_min_theme';
+        const LS_ROOM = 'dnd_min_room';
+        const LS_FB_URL = 'dnd_min_firebase_url';
+        const LS_CACHE_PREFIX = 'dnd_min_cache_';
+
+        // Текущее состояние
+        let roomCode = DEFAULT_ROOM_CODE;
+        let firebaseUrl = DEFAULT_FIREBASE_URL;
+        let playerName = '';
+        let currentTaskFilter = 'all';
+
+        // Хранилище объектов в памяти: { id: { id, title, text, author, createdAt, updatedAt, deleted } }
+        let notesMap = {};
+        let tasksMap = {};
+
+        // Экземпляры синхронизации
+        let gun = null;
+        let gunRoom = null;
+        let fbEventSource = null;
+        let fbPollTimer = null;
+
+        // ==================== ИНИЦИАЛИЗАЦИЯ ====================
+        window.onload = () => {
+            initTheme();
+            parseUrlHashParams();
+            initUserSettings();
+            connectRealtimeBackend();
+        };
+
+        // Чтение параметров из URL (#room=...&db=...) для удобного приглашения игроков одной ссылкой
+        function parseUrlHashParams() {
+            const hash = window.location.hash.substring(1);
+            if (!hash) return;
+            const params = new URLSearchParams(hash);
+            if (params.get('room')) {
+                localStorage.setItem(LS_ROOM, sanitizeRoom(params.get('room')));
+            }
+            if (params.get('db')) {
+                localStorage.setItem(LS_FB_URL, cleanFirebaseUrl(params.get('db')));
+            }
+        }
+
+        function initUserSettings() {
+            playerName = localStorage.getItem(LS_PLAYER_NAME) || '';
+            document.getElementById('playerNameInput').value = playerName;
+
+            roomCode = sanitizeRoom(localStorage.getItem(LS_ROOM) || DEFAULT_ROOM_CODE);
+            document.getElementById('roomInput').value = roomCode;
+
+            const savedFb = localStorage.getItem(LS_FB_URL);
+            firebaseUrl = cleanFirebaseUrl(savedFb !== null ? savedFb : DEFAULT_FIREBASE_URL);
+            document.getElementById('firebaseUrlInput').value = firebaseUrl;
+        }
+
+        function savePlayerName(val) {
+            playerName = val.trim();
+            localStorage.setItem(LS_PLAYER_NAME, playerName);
+        }
+
+        function sanitizeRoom(str) {
+            return (str || DEFAULT_ROOM_CODE).trim().toLowerCase().replace(/[^a-zа-яё0-9_-]/gi, '-') || DEFAULT_ROOM_CODE;
+        }
+
+        function cleanFirebaseUrl(url) {
+            if (!url) return '';
+            let u = url.trim().replace(/\/+$/, '');
+            if (u && !u.startsWith('http')) u = 'https://' + u;
+            return u;
+        }
+
+        // ==================== ПОДКЛЮЧЕНИЕ К ОБЩЕЙ БАЗЕ ДАННЫХ ====================
+        function connectRealtimeBackend() {
+            // Останавливаем старые подписки
+            if (fbEventSource) { fbEventSource.close(); fbEventSource = null; }
+            if (fbPollTimer) { clearInterval(fbPollTimer); fbPollTimer = null; }
+
+            // Загружаем локальный кэш этой комнаты для мгновенного старта
+            loadLocalCache();
+            renderAll();
+
+            const badge = document.getElementById('dbModeBadge');
+
+            if (firebaseUrl) {
+                badge.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500';
+                setStatus('online', 'Firebase • Синхронизация в реальном времени');
+                startFirebaseSync();
+            } else {
+                badge.className = 'w-1.5 h-1.5 rounded-full bg-amber-500';
+                setStatus('online', `P2P Облако (комната #${roomCode}) • Синхронизировано`);
+                startGunSync();
+            }
+        }
+
+        // Вариант 1: Firebase Realtime Database (Server-Sent Events + REST)
+        async function startFirebaseSync() {
+            const roomEndpoint = `${firebaseUrl}/campaigns/${encodeURIComponent(roomCode)}.json`;
+
+            // Первичная загрузка
+            await fetchFirebaseSnapshot(roomEndpoint);
+
+            // Подписка на поток событий в реальном времени (SSE)
+            try {
+                fbEventSource = new EventSource(roomEndpoint);
+                fbEventSource.addEventListener('put', (e) => {
+                    try {
+                        const packet = JSON.parse(e.data);
+                        applyFirebasePacket(packet.path, packet.data);
+                        setStatus('online', 'Firebase • Синхронизировано');
+                    } catch (err) { console.error(err); }
+                });
+                fbEventSource.addEventListener('patch', (e) => {
+                    try {
+                        const packet = JSON.parse(e.data);
+                        applyFirebasePacket(packet.path, packet.data);
+                        setStatus('online', 'Firebase • Синхронизировано');
+                    } catch (err) { console.error(err); }
+                });
+                fbEventSource.onerror = () => {
+                    // Если SSE недоступен, фоллбэк на частый пуллинг
+                    if (!fbPollTimer) {
+                        fbPollTimer = setInterval(() => fetchFirebaseSnapshot(roomEndpoint), 3500);
+                    }
+                };
+            } catch (e) {
+                fbPollTimer = setInterval(() => fetchFirebaseSnapshot(roomEndpoint), 3500);
+            }
+        }
+
+        async function fetchFirebaseSnapshot(endpoint) {
+            try {
+                const res = await fetch(endpoint);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                notesMap = (data && data.notes) ? data.notes : {};
+                tasksMap = (data && data.tasks) ? data.tasks : {};
+                saveLocalCache();
+                renderAll();
+                setStatus('online', 'Firebase • Синхронизировано');
+            } catch (err) {
+                setStatus('error', 'Ошибка доступа к Firebase (проверьте URL и Rules: true)');
+            }
+        }
+
+        function applyFirebasePacket(path, data) {
+            if (path === '/') {
+                notesMap = (data && data.notes) ? data.notes : {};
+                tasksMap = (data && data.tasks) ? data.tasks : {};
+            } else if (path.startsWith('/notes/')) {
+                const id = path.replace('/notes/', '').split('/')[0];
+                if (data === null) delete notesMap[id];
+                else notesMap[id] = { ...(notesMap[id] || {}), ...data };
+            } else if (path === '/notes') {
+                notesMap = data || {};
+            } else if (path.startsWith('/tasks/')) {
+                const id = path.replace('/tasks/', '').split('/')[0];
+                if (data === null) delete tasksMap[id];
+                else tasksMap[id] = { ...(tasksMap[id] || {}), ...data };
+            } else if (path === '/tasks') {
+                tasksMap = data || {};
+            }
+            saveLocalCache();
+            renderAll();
+        }
+
+        // Вариант 2: Gun.js (встроенная P2P база без регистрации)
+        function startGunSync() {
+            try {
+                if (!gun) {
+                    gun = Gun({
+                        peers: [
+                            'https://gun-manhattan.herokuapp.com/gun',
+                            'https://peer.wallie.io/gun',
+                            'https://gundb-relay-mlccl.ondigitalocean.app/gun'
+                        ],
+                        localStorage: false
+                    });
+                }
+
+                gunRoom = gun.get('dnd_minimal_shared_v2_' + roomCode);
+
+                // Подписка на заметки
+                gunRoom.get('notes').map().on((data, id) => {
+                    if (!id) return;
+                    if (!data || data.deleted) {
+                        if (notesMap[id]) {
+                            delete notesMap[id];
+                            saveLocalCache();
+                            renderNotes();
+                        }
+                        return;
+                    }
+                    if (data.title && data.text) {
+                        notesMap[id] = {
+                            id: id,
+                            title: data.title,
+                            text: data.text,
+                            author: data.author || 'Игрок',
+                            createdAt: data.createdAt || Date.now(),
+                            updatedAt: data.updatedAt || Date.now()
+                        };
+                        saveLocalCache();
+                        renderNotes();
+                    }
+                });
+
+                // Подписка на задачи
+                gunRoom.get('tasks').map().on((data, id) => {
+                    if (!id) return;
+                    if (!data || data.deleted) {
+                        if (tasksMap[id]) {
+                            delete tasksMap[id];
+                            saveLocalCache();
+                            renderTasks();
+                        }
+                        return;
+                    }
+                    if (data.text) {
+                        tasksMap[id] = {
+                            id: id,
+                            text: data.text,
+                            done: Boolean(data.done),
+                            author: data.author || 'Игрок',
+                            createdAt: data.createdAt || Date.now()
+                        };
+                        saveLocalCache();
+                        renderTasks();
+                    }
+                });
+            } catch (e) {
+                console.error('Gun init error:', e);
+            }
+        }
+
+        // Универсальная запись/удаление объекта в активную БД
+        async function syncWriteItem(collection, id, payload) {
+            if (collection === 'notes') {
+                if (payload === null) delete notesMap[id];
+                else notesMap[id] = payload;
+            } else {
+                if (payload === null) delete tasksMap[id];
+                else tasksMap[id] = payload;
+            }
+            saveLocalCache();
+            renderAll();
+
+            // Отправка в Firebase
+            if (firebaseUrl) {
+                const itemUrl = `${firebaseUrl}/campaigns/${encodeURIComponent(roomCode)}/${collection}/${id}.json`;
+                try {
+                    await fetch(itemUrl, {
+                        method: payload === null ? 'DELETE' : 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: payload === null ? null : JSON.stringify(payload)
+                    });
+                } catch (e) {
+                    showToast('Ошибка отправки в Firebase');
+                }
+            } else if (gunRoom) {
+                // Отправка в Gun.js
+                if (payload === null) {
+                    gunRoom.get(collection).get(id).put({ deleted: true, updatedAt: Date.now() });
+                } else {
+                    gunRoom.get(collection).get(id).put({ ...payload, deleted: false });
+                }
+            }
+        }
+
+        // ==================== РАБОТА С ЗАМЕТКАМИ ====================
+        function submitNote(e) {
+            e.preventDefault();
+            const editId = document.getElementById('editingNoteId').value;
+            const title = document.getElementById('noteTitle').value.trim();
+            const text = document.getElementById('noteText').value.trim();
+            if (!title || !text) return;
+
+            const author = playerName || 'Аноним';
+            const now = Date.now();
+
+            if (editId && notesMap[editId]) {
+                const updated = {
+                    ...notesMap[editId],
+                    title,
+                    text,
+                    author: notesMap[editId].author || author,
+                    updatedAt: now
+                };
+                resetNoteForm();
+                syncWriteItem('notes', editId, updated);
+                showToast('Заметка обновлена у всех');
+            } else {
+                const id = 'n_' + now + '_' + Math.random().toString(36).substring(2, 6);
+                const newNote = {
+                    id,
+                    title,
+                    text,
+                    author,
+                    createdAt: now,
+                    updatedAt: now
+                };
+                resetNoteForm();
+                syncWriteItem('notes', id, newNote);
+                showToast('Заметка опубликована');
+            }
+        }
+
+        function startEditNote(id) {
+            const note = notesMap[id];
+            if (!note) return;
+            document.getElementById('editingNoteId').value = note.id;
+            document.getElementById('noteTitle').value = note.title;
+            document.getElementById('noteText').value = note.text;
+            document.getElementById('noteFormStatus').textContent = 'Редактирование записи';
+            document.getElementById('submitNoteBtn').textContent = 'Сохранить';
+            document.getElementById('cancelEditBtn').classList.remove('hidden');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function resetNoteForm() {
+            document.getElementById('editingNoteId').value = '';
+            document.getElementById('noteTitle').value = '';
+            document.getElementById('noteText').value = '';
+            document.getElementById('noteFormStatus').textContent = 'Видно всем участникам';
+            document.getElementById('submitNoteBtn').textContent = 'Опубликовать';
+            document.getElementById('cancelEditBtn').classList.add('hidden');
+        }
+
+        function deleteNote(id) {
+            if (document.getElementById('editingNoteId').value === id) resetNoteForm();
+            syncWriteItem('notes', id, null);
+            showToast('Заметка удалена');
+        }
+
+        function renderNotes() {
+            const container = document.getElementById('notesList');
+            const query = (document.getElementById('searchInput')?.value || '').toLowerCase().trim();
+
+            const allNotes = Object.values(notesMap)
+                .filter(n => n && !n.deleted && n.title)
+                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+            document.getElementById('notesCountBadge').textContent = allNotes.length;
+            document.getElementById('mobNotesCount').textContent = allNotes.length;
+
+            const filtered = allNotes.filter(n => {
+                if (!query) return true;
+                return n.title.toLowerCase().includes(query) ||
+                       n.text.toLowerCase().includes(query) ||
+                       (n.author || '').toLowerCase().includes(query);
+            });
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="py-12 px-4 text-center text-xs text-stone-400 dark:text-neutral-500 border border-dashed border-stone-200 dark:border-neutral-800/80 rounded-xl">
+                        Заметок пока нет. Добавьте первую запись выше — она сразу появится у всей партии.
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = filtered.map(n => `
+                <article class="p-4 sm:p-5 rounded-xl bg-white dark:bg-neutral-900/90 border border-stone-200/90 dark:border-neutral-800 shadow-2xs space-y-2 group transition">
+                    <div class="flex items-start justify-between gap-3">
+                        <h3 class="text-sm sm:text-base font-semibold text-stone-900 dark:text-neutral-100 leading-snug">${escapeHtml(n.title)}</h3>
+                        <div class="flex items-center gap-2.5 shrink-0 text-[11px] text-stone-400 dark:text-neutral-500">
+                            <button onclick="startEditNote('${n.id}')" class="opacity-70 group-hover:opacity-100 hover:text-stone-800 dark:hover:text-neutral-200 transition">Изменить</button>
+                            <button onclick="deleteNote('${n.id}')" class="opacity-70 group-hover:opacity-100 hover:text-red-500 transition">Удалить</button>
+                        </div>
+                    </div>
+                    <p class="text-sm text-stone-700 dark:text-neutral-300 whitespace-pre-line leading-relaxed font-serif text-[15px]">${escapeHtml(n.text)}</p>
+                    <div class="pt-1 flex items-center gap-2 text-[11px] text-stone-400 dark:text-neutral-500">
+                        <span class="font-medium text-stone-500 dark:text-neutral-400">${escapeHtml(n.author || 'Игрок')}</span>
+                        <span>•</span>
+                        <span>${formatTime(n.createdAt)}</span>
+                    </div>
+                </article>
+            `).join('');
+        }
+
+        // ==================== РАБОТА С ЗАДАЧАМИ ====================
+        function submitTask(e) {
+            e.preventDefault();
+            const input = document.getElementById('taskInput');
+            const text = input.value.trim();
+            if (!text) return;
+
+            const now = Date.now();
+            const id = 't_' + now + '_' + Math.random().toString(36).substring(2, 6);
+            const newTask = {
+                id,
+                text,
+                done: false,
+                author: playerName || 'Аноним',
+                createdAt: now
+            };
+
+            input.value = '';
+            syncWriteItem('tasks', id, newTask);
+        }
+
+        function toggleTask(id) {
+            const t = tasksMap[id];
+            if (!t) return;
+            syncWriteItem('tasks', id, { ...t, done: !t.done });
+        }
+
+        function deleteTask(id) {
+            syncWriteItem('tasks', id, null);
+        }
+
+        function setTaskFilter(filter) {
+            currentTaskFilter = filter;
+            ['all', 'active', 'done'].forEach(f => {
+                const btn = document.getElementById('filter-' + f);
+                if (f === filter) {
+                    btn.className = 'text-stone-800 dark:text-neutral-200 font-medium';
+                } else {
+                    btn.className = 'hover:text-stone-700 dark:hover:text-neutral-300';
+                }
+            });
+            renderTasks();
+        }
+
+        function renderTasks() {
+            const container = document.getElementById('tasksList');
+            const allTasks = Object.values(tasksMap)
+                .filter(t => t && !t.deleted && t.text)
+                .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+            const activeCount = allTasks.filter(t => !t.done).length;
+            document.getElementById('tasksCountBadge').textContent = activeCount;
+            document.getElementById('mobTasksCount').textContent = activeCount;
+
+            const filtered = allTasks.filter(t => {
+                if (currentTaskFilter === 'active') return !t.done;
+                if (currentTaskFilter === 'done') return t.done;
+                return true;
+            });
+
+            if (filtered.length === 0) {
+                container.innerHTML = `<div class="p-8 text-center text-xs text-stone-400 dark:text-neutral-500">Список задач пуст.</div>`;
+                return;
+            }
+
+            container.innerHTML = filtered.map(t => `
+                <div class="flex items-start justify-between gap-3 px-3.5 py-3 group hover:bg-stone-50/80 dark:hover:bg-neutral-800/40 transition">
+                    <label class="flex items-start gap-2.5 flex-1 cursor-pointer select-none">
+                        <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTask('${t.id}')" class="mt-0.5 w-4 h-4 rounded accent-stone-800 dark:accent-neutral-300 cursor-pointer shrink-0">
+                        <div class="space-y-0.5">
+                            <div class="text-xs sm:text-sm leading-snug ${t.done ? 'line-through text-stone-400 dark:text-neutral-500' : 'text-stone-800 dark:text-neutral-200'}">${escapeHtml(t.text)}</div>
+                            <div class="text-[10px] text-stone-400 dark:text-neutral-500">${escapeHtml(t.author || 'Игрок')}</div>
+                        </div>
+                    </label>
+                    <button onclick="deleteTask('${t.id}')" class="text-xs text-stone-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition px-1" title="Удалить задачу">
+                        ✕
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function renderAll() {
+            renderNotes();
+            renderTasks();
+        }
+
+        // ==================== УПРАВЛЕНИЕ КОМНАТОЙ, БАЗОЙ И ССЫЛКОЙ ====================
+        function changeRoom(val) {
+            roomCode = sanitizeRoom(val);
+            document.getElementById('roomInput').value = roomCode;
+            localStorage.setItem(LS_ROOM, roomCode);
+            notesMap = {};
+            tasksMap = {};
+            connectRealtimeBackend();
+            showToast('Переключено в комнату #' + roomCode);
+        }
+
+        function toggleDbModal() {
+            document.getElementById('dbModal').classList.toggle('hidden');
+        }
+
+        function saveFirebaseUrl() {
+            const raw = document.getElementById('firebaseUrlInput').value;
+            firebaseUrl = cleanFirebaseUrl(raw);
+            document.getElementById('firebaseUrlInput').value = firebaseUrl;
+            localStorage.setItem(LS_FB_URL, firebaseUrl);
+            document.getElementById('dbModal').classList.add('hidden');
+            connectRealtimeBackend();
+            showToast(firebaseUrl ? 'Firebase подключен' : 'Включен P2P-режим');
+        }
+
+        function clearFirebaseUrl() {
+            firebaseUrl = '';
+            document.getElementById('firebaseUrlInput').value = '';
+            localStorage.removeItem(LS_FB_URL);
+            document.getElementById('dbModal').classList.add('hidden');
+            connectRealtimeBackend();
+            showToast('Переключено на встроенный P2P-режим');
+        }
+
+        function copyInviteLink() {
+            const base = window.location.href.split('#')[0];
+            const params = new URLSearchParams();
+            params.set('room', roomCode);
+            if (firebaseUrl) params.set('db', firebaseUrl);
+            const shareUrl = `${base}#${params.toString()}`;
+
+            const area = document.createElement('textarea');
+            area.value = shareUrl;
+            document.body.appendChild(area);
+            area.select();
+            document.execCommand('copy');
+            document.body.removeChild(area);
+            showToast('Ссылка для игроков скопирована');
+        }
+
+        // ==================== ЛОКАЛЬНЫЙ КЭШ И ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+        function loadLocalCache() {
+            try {
+                const raw = localStorage.getItem(LS_CACHE_PREFIX + roomCode);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    notesMap = parsed.notes || {};
+                    tasksMap = parsed.tasks || {};
+                    return;
+                }
+            } catch (e) {}
+            notesMap = {};
+            tasksMap = {};
+        }
+
+        function saveLocalCache() {
+            try {
+                localStorage.setItem(LS_CACHE_PREFIX + roomCode, JSON.stringify({
+                    notes: notesMap,
+                    tasks: tasksMap
+                }));
+            } catch (e) {}
+        }
+
+        function setStatus(state, text) {
+            const dot = document.getElementById('statusDot');
+            const label = document.getElementById('statusText');
+            label.textContent = text;
+            if (state === 'online') {
+                dot.className = 'inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse-slow';
+            } else {
+                dot.className = 'inline-block w-2 h-2 rounded-full bg-red-500';
+            }
+        }
+
+        function switchMobileTab(tab) {
+            const colNotes = document.getElementById('col-notes');
+            const colTasks = document.getElementById('col-tasks');
+            const btnNotes = document.getElementById('mob-tab-notes');
+            const btnTasks = document.getElementById('mob-tab-tasks');
+
+            if (tab === 'notes') {
+                colNotes.classList.remove('hidden');
+                colTasks.classList.add('hidden');
+                btnNotes.className = 'flex-1 py-1.5 rounded-lg text-xs font-medium transition bg-white dark:bg-neutral-800 shadow-2xs text-stone-900 dark:text-white';
+                btnTasks.className = 'flex-1 py-1.5 rounded-lg text-xs font-medium transition text-stone-500 dark:text-neutral-400';
+            } else {
+                colNotes.classList.add('hidden');
+                colTasks.classList.remove('hidden');
+                btnTasks.className = 'flex-1 py-1.5 rounded-lg text-xs font-medium transition bg-white dark:bg-neutral-800 shadow-2xs text-stone-900 dark:text-white';
+                btnNotes.className = 'flex-1 py-1.5 rounded-lg text-xs font-medium transition text-stone-500 dark:text-neutral-400';
+            }
+        }
+
+        function toggleTheme() {
+            const isDark = document.documentElement.classList.toggle('dark');
+            localStorage.setItem(LS_THEME, isDark ? 'dark' : 'light');
+        }
+
+        function initTheme() {
+            const saved = localStorage.getItem(LS_THEME);
+            if (saved === 'light') {
+                document.documentElement.classList.remove('dark');
+            } else {
+                document.documentElement.classList.add('dark');
+            }
+        }
+
+        function formatTime(ts) {
+            if (!ts) return '';
+            const d = new Date(ts);
+            return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ' в ' +
+                   d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.classList.remove('hidden');
+            clearTimeout(window._toastTimer);
+            window._toastTimer = setTimeout(() => t.classList.add('hidden'), 2400);
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+    </script>
+</body>
+</html>
